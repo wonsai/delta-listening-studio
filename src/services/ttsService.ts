@@ -108,15 +108,82 @@ function createExamChimePcm(sampleRate: number): Float32Array {
 }
 
 /**
- * Base64 인코딩된 16-bit Little-Endian PCM(24kHz)을 Float32Array로 변환
+ * Base64 인코딩된 오디오(WAV 컨테이너 또는 16-bit Little-Endian Raw PCM)를 Float32Array로 디코딩
  */
-function base64Pcm16ToFloat32(b64: string): Float32Array {
+function decodeGeminiAudioToFloat32(
+  b64: string,
+  mimeType?: string
+): { samples: Float32Array; sampleRate: number } {
   const binary = atob(b64);
   const byteLen = binary.length;
   const bytes = new Uint8Array(byteLen);
   for (let i = 0; i < byteLen; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
+
+  // RIFF/WAVE 헤더가 포함된 경우 헤더를 분리하고 실제 data 청크만 추출
+  const isRiffWav =
+    byteLen >= 44 &&
+    bytes[0] === 0x52 && // 'R'
+    bytes[1] === 0x49 && // 'I'
+    bytes[2] === 0x46 && // 'F'
+    bytes[3] === 0x46 && // 'F'
+    bytes[8] === 0x57 && // 'W'
+    bytes[9] === 0x41 && // 'A'
+    bytes[10] === 0x56 && // 'V'
+    bytes[11] === 0x45; // 'E'
+
+  if (isRiffWav) {
+    const headerView = new DataView(bytes.buffer, bytes.byteOffset, byteLen);
+    const numChannels = Math.max(1, headerView.getUint16(22, true) || 1);
+    const sampleRate = headerView.getUint32(24, true) || 24000;
+    const bitsPerSample = headerView.getUint16(34, true) || 16;
+
+    let dataOffset = 44;
+    let dataSize = byteLen - 44;
+    let cursor = 12;
+    while (cursor + 8 <= byteLen) {
+      const id = String.fromCharCode(
+        bytes[cursor],
+        bytes[cursor + 1],
+        bytes[cursor + 2],
+        bytes[cursor + 3]
+      );
+      const chunkSize = headerView.getUint32(cursor + 4, true);
+      if (id === 'data') {
+        dataOffset = cursor + 8;
+        dataSize = Math.min(chunkSize, byteLen - dataOffset);
+        break;
+      }
+      cursor += 8 + chunkSize + (chunkSize % 2);
+    }
+
+    const bytesPerSample = Math.max(2, Math.floor(bitsPerSample / 8));
+    const frameSize = bytesPerSample * numChannels;
+    const frameCount = Math.floor(dataSize / frameSize);
+    const pcmView = new DataView(
+      bytes.buffer,
+      bytes.byteOffset + dataOffset,
+      frameCount * frameSize
+    );
+    const float32 = new Float32Array(frameCount);
+
+    for (let i = 0; i < frameCount; i++) {
+      let sum = 0;
+      for (let ch = 0; ch < numChannels; ch++) {
+        const pos = i * frameSize + ch * bytesPerSample;
+        const int16 = pcmView.getInt16(pos, true);
+        sum += int16 < 0 ? int16 / 32768 : int16 / 32767;
+      }
+      float32[i] = sum / numChannels;
+    }
+
+    return { samples: float32, sampleRate };
+  }
+
+  // Raw 16-bit Little-Endian PCM (기본 24kHz 또는 mimeType의 rate 파라미터)
+  const rateMatch = mimeType?.match(/rate=(\d+)/i);
+  const sampleRate = rateMatch ? Number(rateMatch[1]) || 24000 : 24000;
   const sampleCount = Math.floor(byteLen / 2);
   const view = new DataView(bytes.buffer, bytes.byteOffset, sampleCount * 2);
   const float32 = new Float32Array(sampleCount);
@@ -124,25 +191,27 @@ function base64Pcm16ToFloat32(b64: string): Float32Array {
     const int16 = view.getInt16(i * 2, true);
     float32[i] = int16 < 0 ? int16 / 32768 : int16 / 32767;
   }
-  return float32;
+  return { samples: float32, sampleRate };
 }
 
 /**
- * DELTA 원본 검증 로직: 24kHz PCM을 48kHz로 고품질 리샘플링 (MPEG-1 MP3 안정 인코딩용)
- * playbackSpeed가 1.0이 아닌 경우 발화 속도 배율도 함께 반영
+ * 임의 샘플레이트 PCM을 지정된 목표 샘플레이트로 변환 (배속 반영 지원)
  */
-async function resamplePcmTo48k(
+async function resamplePcm(
   pcm: Float32Array,
   sourceRate: number,
+  targetRate: number,
   speedMultiplier = 1.0
 ): Promise<Float32Array> {
-  const targetRate = 48000;
   const effectiveSpeed = Math.max(0.65, Math.min(1.45, speedMultiplier));
   if (sourceRate === targetRate && Math.abs(effectiveSpeed - 1.0) < 0.01) {
     return pcm;
   }
   try {
-    const outLength = Math.max(1, Math.ceil((pcm.length * targetRate) / (sourceRate * effectiveSpeed)));
+    const outLength = Math.max(
+      1,
+      Math.ceil((pcm.length * targetRate) / (sourceRate * effectiveSpeed))
+    );
     const offline = new OfflineAudioContext(1, outLength, targetRate);
     const buffer = offline.createBuffer(1, pcm.length, sourceRate);
     buffer.copyToChannel(new Float32Array(pcm), 0);
@@ -168,6 +237,18 @@ async function resamplePcmTo48k(
     }
     return out;
   }
+}
+
+/**
+ * DELTA 원본 검증 로직: 24kHz PCM을 48kHz로 고품질 리샘플링 (MPEG-1 MP3 안정 인코딩용)
+ * playbackSpeed가 1.0이 아닌 경우 발화 속도 배율도 함께 반영
+ */
+async function resamplePcmTo48k(
+  pcm: Float32Array,
+  sourceRate: number,
+  speedMultiplier = 1.0
+): Promise<Float32Array> {
+  return resamplePcm(pcm, sourceRate, 48000, speedMultiplier);
 }
 
 /**
@@ -220,14 +301,17 @@ function encodeWavFallback(pcm: Float32Array, sampleRate = 48000): Blob {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
-const GEMINI_TTS_MODELS = [
-  'gemini-2.5-flash-preview-tts',
-  'gemini-2.5-pro-preview-tts',
-];
+export const FIXED_GEMINI_TTS_MODEL = 'gemini-3.8-flash-tts';
+
+interface GeminiTtsTurn {
+  text: string;
+  speaker?: string;
+  style?: string;
+}
 
 async function callGeminiSingleOrDualTts(
   apiKey: string,
-  promptText: string,
+  turns: GeminiTtsTurn[],
   speakers: { alias: string; voiceName: string }[]
 ): Promise<Float32Array> {
   const speechConfig =
@@ -252,41 +336,75 @@ async function callGeminiSingleOrDualTts(
           },
         };
 
-  let lastErr = '';
-  for (const model of GEMINI_TTS_MODELS) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model
-    )}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+  const parts = turns.map((t) => {
+    const speechMetadata: Record<string, string> = {};
+    if (t.speaker) speechMetadata.speaker = t.speaker;
+    if (t.style) speechMetadata.style = t.style;
+    return Object.keys(speechMetadata).length > 0
+      ? { text: t.text, speechMetadata }
+      : { text: t.text };
+  });
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }],
-        generationConfig: {
-          responseModalities: ['AUDIO'],
-          speechConfig,
-        },
-      }),
-    });
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    FIXED_GEMINI_TTS_MODEL
+  )}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
 
-    if (res.ok) {
-      const json = await res.json();
-      const b64 = json?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!b64) {
-        throw new Error('Gemini TTS 응답에서 오디오 데이터를 찾지 못했습니다.');
-      }
-      return base64Pcm16ToFloat32(b64);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig,
+      },
+    }),
+  });
+
+  if (res.ok) {
+    const json = await res.json();
+    const resParts: Array<{
+      inlineData?: { data?: string; mimeType?: string };
+      inline_data?: { data?: string; mime_type?: string };
+    }> = json?.candidates?.[0]?.content?.parts || [];
+
+    const audioChunks24k: Float32Array[] = [];
+    for (const part of resParts) {
+      const b64 = part?.inlineData?.data || part?.inline_data?.data;
+      const mimeType = part?.inlineData?.mimeType || part?.inline_data?.mime_type;
+      if (!b64) continue;
+      const decoded = decodeGeminiAudioToFloat32(b64, mimeType);
+      const pcm24k =
+        decoded.sampleRate === 24000
+          ? decoded.samples
+          : await resamplePcm(decoded.samples, decoded.sampleRate, 24000, 1.0);
+      audioChunks24k.push(pcm24k);
     }
 
-    const errJson = await res.json().catch(() => ({}));
-    lastErr = errJson?.error?.message || `HTTP ${res.status}`;
-    if (res.status === 400 && /API key/i.test(lastErr)) {
-      throw new Error('유효하지 않은 Gemini API 키입니다.');
+    if (audioChunks24k.length === 0) {
+      throw new Error('Gemini TTS 응답에서 오디오 데이터를 찾지 못했습니다.');
     }
+    if (audioChunks24k.length === 1) {
+      return audioChunks24k[0];
+    }
+
+    const totalLen = audioChunks24k.reduce((acc, c) => acc + c.length, 0);
+    const joined = new Float32Array(totalLen);
+    let offset = 0;
+    for (const c of audioChunks24k) {
+      joined.set(c, offset);
+      offset += c.length;
+    }
+    return joined;
   }
 
-  throw new Error(`Gemini 원어민 TTS 호출 실패: ${lastErr}`);
+  const errJson = await res.json().catch(() => ({}));
+  const errMsg = errJson?.error?.message || `HTTP ${res.status}`;
+  if (res.status === 400 && /API key|API_KEY_INVALID/i.test(errMsg)) {
+    throw new Error('유효하지 않은 Gemini API 키입니다.');
+  }
+
+  throw new Error(`Gemini 원어민 TTS 호출 실패 [${FIXED_GEMINI_TTS_MODEL}]: ${errMsg}`);
 }
 
 /**
@@ -324,11 +442,17 @@ export async function synthesizeItemMp3(
 
     // 한국어 문항 번호 안내 멘트 옵션 (Gemini TTS는 한국어·영어 모두 자연스럽게 지원)
     if (config.includeKoreanIntro) {
-      onProgress?.(`${item.itemNo}번 문항 안내 멘트 생성 중...`);
-      const introPrompt = `차분하고 명확한 한국어 듣기평가 안내 아나운서 톤으로 읽어 주세요:\n${item.itemNo}번. ${item.questionPrompt}`;
-      const introPcm = await callGeminiSingleOrDualTts(apiKey, introPrompt, [
-        { alias: 'Narrator', voiceName: config.geminiVoices.N || 'Kore' },
-      ]);
+      onProgress?.(`${item.itemNo}번 문항 안내 멘트 생성 중 (${FIXED_GEMINI_TTS_MODEL})...`);
+      const introPcm = await callGeminiSingleOrDualTts(
+        apiKey,
+        [
+          {
+            text: `${item.itemNo}번. ${item.questionPrompt}`,
+            style: 'calm, clear Korean listening exam announcer tone',
+          },
+        ],
+        [{ alias: 'Narrator', voiceName: config.geminiVoices.N || 'Kore' }]
+      );
       chunks24k.push(introPcm);
       chunks24k.push(new Float32Array(Math.round(sr * 1.4)));
     }
@@ -337,26 +461,38 @@ export async function synthesizeItemMp3(
     const uniqueSpeakers = Array.from(new Set(segs.map((s) => s.spk)));
 
     if (uniqueSpeakers.length === 1) {
-      onProgress?.(`${item.itemNo}번 문항 원어민 담화 음성 생성 중 (Gemini TTS)...`);
+      onProgress?.(
+        `${item.itemNo}번 문항 원어민 담화 음성 생성 중 (${FIXED_GEMINI_TTS_MODEL})...`
+      );
       const spk = uniqueSpeakers[0];
       const fullScript = segs.map((s) => s.text).join(' ');
-      const prompt = `Read the following English listening assessment script clearly, naturally, and at a steady educational pace for Korean secondary school students:\n\n${fullScript}`;
-      const pcm = await callGeminiSingleOrDualTts(apiKey, prompt, [
-        { alias: 'SpeakerA', voiceName: voiceMap[spk] || 'Kore' },
-      ]);
+      const pcm = await callGeminiSingleOrDualTts(
+        apiKey,
+        [
+          {
+            text: fullScript,
+            style:
+              'clear, natural, and steady educational pace for secondary school English listening assessment',
+          },
+        ],
+        [{ alias: 'SpeakerA', voiceName: voiceMap[spk] || 'Kore' }]
+      );
       chunks24k.push(pcm);
     } else if (uniqueSpeakers.length === 2) {
-      onProgress?.(`${item.itemNo}번 문항 원어민 2인 대화 음성 생성 중 (Gemini Multi-Speaker)...`);
+      onProgress?.(
+        `${item.itemNo}번 문항 원어민 2인 대화 음성 생성 중 (${FIXED_GEMINI_TTS_MODEL})...`
+      );
       const [spk1, spk2] = uniqueSpeakers;
       const aliasMap: Record<string, string> = {
         [spk1]: 'SpeakerOne',
         [spk2]: 'SpeakerTwo',
       };
-      const dialogueLines = segs
-        .map((s) => `${aliasMap[s.spk]}: ${s.text}`)
-        .join('\n');
-      const prompt = `Read the following English listening assessment conversation naturally and clearly with realistic turn-taking at an educational pace:\n\n${dialogueLines}`;
-      const pcm = await callGeminiSingleOrDualTts(apiKey, prompt, [
+      const turns: GeminiTtsTurn[] = segs.map((s) => ({
+        text: s.text,
+        speaker: aliasMap[s.spk],
+        style: 'clear, natural conversational pace for English listening assessment',
+      }));
+      const pcm = await callGeminiSingleOrDualTts(apiKey, turns, [
         { alias: 'SpeakerOne', voiceName: voiceMap[spk1] || 'Puck' },
         { alias: 'SpeakerTwo', voiceName: voiceMap[spk2] || 'Kore' },
       ]);
@@ -366,9 +502,16 @@ export async function synthesizeItemMp3(
       for (let i = 0; i < segs.length; i++) {
         const s = segs[i];
         onProgress?.(`${item.itemNo}번 문항 발화 생성 중 (${i + 1}/${segs.length})...`);
-        const pcm = await callGeminiSingleOrDualTts(apiKey, s.text, [
-          { alias: 'Speaker', voiceName: voiceMap[s.spk] || 'Kore' },
-        ]);
+        const pcm = await callGeminiSingleOrDualTts(
+          apiKey,
+          [
+            {
+              text: s.text,
+              style: 'clear, natural educational pace for English listening assessment',
+            },
+          ],
+          [{ alias: 'Speaker', voiceName: voiceMap[s.spk] || 'Kore' }]
+        );
         chunks24k.push(pcm);
         if (s.pause > 0) {
           chunks24k.push(new Float32Array(Math.round(sr * s.pause)));

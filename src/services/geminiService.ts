@@ -39,33 +39,7 @@ export function saveApiKey(key: string): void {
   }
 }
 
-const PREFERRED_TEXT_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-2.0-flash',
-];
-
-async function discoverFallbackModels(apiKey: string): Promise<string[]> {
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    const names: string[] = (data.models || [])
-      .filter(
-        (m: { name?: string; supportedGenerationMethods?: string[] }) =>
-          Array.isArray(m.supportedGenerationMethods) &&
-          m.supportedGenerationMethods.includes('generateContent') &&
-          m.name &&
-          !/tts|image|embedding|vision|aqa/i.test(m.name)
-      )
-      .map((m: { name: string }) => m.name.replace(/^models\//, ''));
-    return names;
-  } catch {
-    return [];
-  }
-}
+export const FIXED_GEMINI_MODEL = 'gemini-3.8-flash';
 
 async function callGeminiJson(
   apiKey: string,
@@ -79,81 +53,80 @@ async function callGeminiJson(
     throw new Error('Gemini API 키가 입력되지 않았습니다. 우측 상단 [API 키 설정]에서 키를 입력해 주세요.');
   }
 
-  const modelsToTry = [...PREFERRED_TEXT_MODELS];
-  let discovered = false;
-  let lastError = '';
+  onStatus?.(`AI 출제 엔진(${FIXED_GEMINI_MODEL})에서 문항을 설계하고 있습니다...`);
 
-  for (let i = 0; i < modelsToTry.length; i++) {
-    const model = modelsToTry[i];
-    onStatus?.(`AI 출제 엔진(${model})에서 문항을 설계하고 있습니다...`);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    FIXED_GEMINI_MODEL
+  )}:generateContent?key=${encodeURIComponent(key)}`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model
-    )}:generateContent?key=${encodeURIComponent(key)}`;
-
-    const body = {
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
+  const body = {
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: userPrompt }],
       },
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: userPrompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.65,
-        responseMimeType: 'application/json',
-        responseSchema,
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema,
+      thinkingConfig: {
+        thinkingLevel: 'LOW',
       },
-    };
+    },
+  };
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 
-    if (res.ok) {
-      const json = await res.json();
-      const rawText =
-        json?.candidates?.[0]?.content?.parts
-          ?.map((p: { text?: string }) => p.text || '')
-          .join('') || '';
-      if (!rawText.trim()) {
-        throw new Error('AI 응답이 비어 있습니다. 다시 시도해 주세요.');
-      }
-      const cleaned = rawText
-        .trim()
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '');
-      return JSON.parse(cleaned);
+  if (res.ok) {
+    const json = await res.json();
+    const parts: Array<{ text?: string; thought?: boolean }> =
+      json?.candidates?.[0]?.content?.parts || [];
+    const rawText = parts
+      .filter((p) => !p.thought && typeof p.text === 'string')
+      .map((p) => p.text || '')
+      .join('');
+
+    if (!rawText.trim()) {
+      throw new Error('AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.');
     }
 
-    let errDetail = `HTTP ${res.status}`;
-    try {
-      const errJson = await res.json();
-      errDetail = errJson?.error?.message || errDetail;
-    } catch {
-      // ignore
-    }
-    lastError = `[${model}] ${errDetail}`;
-
-    if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(errDetail)) {
-      throw new Error('유효하지 않은 Gemini API 키입니다. API 키를 다시 확인해 주세요.');
-    }
-
-    // 404/429/503 시 대체 모델 탐색
-    if ((res.status === 404 || res.status === 429 || res.status === 503) && !discovered) {
-      discovered = true;
-      const found = await discoverFallbackModels(key);
-      for (const fm of found) {
-        if (!modelsToTry.includes(fm)) modelsToTry.push(fm);
-      }
-    }
+    const cleaned = rawText
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '');
+    return JSON.parse(cleaned);
   }
 
-  throw new Error(`Gemini API 호출에 실패했습니다: ${lastError}`);
+  let errDetail = `HTTP ${res.status}`;
+  try {
+    const errJson = await res.json();
+    errDetail = errJson?.error?.message || errDetail;
+  } catch {
+    // ignore JSON parse error on error body
+  }
+
+  if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(errDetail)) {
+    throw new Error('유효하지 않은 Gemini API 키입니다. 우측 상단 [API 키 설정]에서 키를 다시 확인해 주세요.');
+  }
+  if (res.status === 429) {
+    throw new Error(
+      `Gemini API 요청 한도(Quota)를 초과했습니다. 잠시 후 다시 시도해 주세요. (${FIXED_GEMINI_MODEL}: ${errDetail})`
+    );
+  }
+  if (res.status === 503) {
+    throw new Error(
+      `현재 Gemini 서버 요청이 일시적으로 집중되고 있습니다. 몇 초 후 다시 시도해 주세요. (${FIXED_GEMINI_MODEL})`
+    );
+  }
+
+  throw new Error(`Gemini API 호출에 실패했습니다 [${FIXED_GEMINI_MODEL}]: ${errDetail}`);
 }
 
 export async function testGeminiApiKey(apiKey: string): Promise<{ ok: boolean; message: string }> {
@@ -161,7 +134,9 @@ export async function testGeminiApiKey(apiKey: string): Promise<{ ok: boolean; m
   if (!key) return { ok: false, message: 'API 키를 입력해 주세요.' };
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        FIXED_GEMINI_MODEL
+      )}?key=${encodeURIComponent(key)}`
     );
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -170,11 +145,9 @@ export async function testGeminiApiKey(apiKey: string): Promise<{ ok: boolean; m
         message: err?.error?.message || `연결 실패 (HTTP ${res.status})`,
       };
     }
-    const data = await res.json();
-    const count = Array.isArray(data.models) ? data.models.length : 0;
     return {
       ok: true,
-      message: `정상 연결됨 (사용 가능한 Gemini 모델 ${count}개 확인)`,
+      message: `정상 연결됨 (고정 출제 모델: ${FIXED_GEMINI_MODEL} 준비 완료)`,
     };
   } catch (e) {
     return {
