@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import {
   GenerationParams,
@@ -97,6 +97,10 @@ export const App: React.FC = () => {
   const [params, setParams] = useState<GenerationParams>(INITIAL_PARAMS);
   const [items, setItems] = useState<ListeningItem[]>(() => cloneSampleItems());
   const [activeIndex, setActiveIndex] = useState<number>(0);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [currentStep]);
 
   const [generating, setGenerating] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');

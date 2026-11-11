@@ -194,7 +194,10 @@ export const Step3Editor: React.FC<Step3Props> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* 좌측 문항 목록 사이드바 */}
-        <aside className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 p-4 shadow-xs lg:sticky lg:top-36 space-y-3">
+        <aside
+          style={{ top: 'var(--header-offset, 9rem)' }}
+          className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 p-4 shadow-xs lg:sticky transition-[top] duration-200 space-y-3"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-extrabold text-slate-700">
               문항 목록 ({items.length}문항)
@@ -209,7 +212,7 @@ export const Step3Editor: React.FC<Step3Props> = ({
             </button>
           </div>
 
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-[calc(100vh-9rem)] overflow-y-auto pr-1">
             {items.map((it, idx) => {
               const active = idx === activeIndex;
               const wc = countTranscriptWords(it.transcript);
