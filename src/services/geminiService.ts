@@ -458,6 +458,16 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
     }
   }
 
+  // 정기고사 원안 표준 순서(선택형 → 단답형 → 서술형)에 맞춰 슬롯 정렬
+  const formatPriority: Record<QuestionFormatType, number> = {
+    mcq_5: 0,
+    gap_poster: 1,
+    short_en: 2,
+    short_kr: 3,
+    tf_justify: 4,
+  };
+  formatSlots.sort((a, b) => formatPriority[a] - formatPriority[b]);
+
   // 2) 담화·대화 유형 슬롯 배열 구성 (문항 수 연동)
   const autoTextCycle = [
     '대화문',

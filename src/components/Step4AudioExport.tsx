@@ -30,11 +30,15 @@ import {
   synthesizeItemMp3,
 } from '../services/ttsService';
 import {
+  OfficialExamOptions,
+  OfficialNumberingMode,
   buildAnswerKeyHwpx,
   buildFullPackageZip,
   buildMasterSpecHwpx,
-  buildStudentExamHwpx,
+  buildOfficialExamHwpx,
+  deriveDefaultCoverTitle,
   sanitizeFilename,
+  summarizeOfficialExamComposition,
   triggerBlobDownload,
 } from '../services/hwpxService';
 import {
@@ -85,12 +89,40 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
 
   const [includeTranslation, setIncludeTranslation] = useState(true);
   const [includeExplanation, setIncludeExplanation] = useState(true);
+
+  // [원안 양식] 문제지 표지 · 인쇄 옵션 상태
+  const [includeCoverPage, setIncludeCoverPage] = useState(true);
+  const [coverTitle, setCoverTitle] = useState(() =>
+    deriveDefaultCoverTitle(params.assessmentTitle)
+  );
+  const [examDate, setExamDate] = useState('2026. 00. 00.');
+  const [examPeriod, setExamPeriod] = useState('1');
+  const [subjectCode, setSubjectCode] = useState('01');
+  const [schoolNameInput, setSchoolNameInput] = useState(
+    () => params.schoolName.trim() || '대구서부고등학교'
+  );
+  const [pageCountOverride, setPageCountOverride] = useState('');
+  const [numberingMode, setNumberingMode] =
+    useState<OfficialNumberingMode>('exam_standard');
+
   const [exportingDoc, setExportingDoc] = useState<
-    'master' | 'student' | 'answer' | 'zip' | null
+    'official' | 'master' | 'answer' | 'zip' | null
   >(null);
   const [exportSuccessMsg, setExportSuccessMsg] = useState('');
 
   const cancelBatchRef = useRef(false);
+
+  const examComp = summarizeOfficialExamComposition(items);
+  const officialOptions: OfficialExamOptions = {
+    includeCoverPage,
+    coverTitle,
+    examDate,
+    examPeriod,
+    subjectCode,
+    schoolName: schoolNameInput.trim() || params.schoolName.trim() || '대구서부고등학교',
+    pageCountOverride,
+    numberingMode,
+  };
 
   const readyAudioCount = items.filter((it) => Boolean(it.audioBlob)).length;
   const voiceList = ttsConfig.engine === 'gemini' ? GEMINI_VOICES : KOKORO_VOICES;
@@ -233,6 +265,27 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
     setTimeout(() => setExportSuccessMsg(''), 4500);
   };
 
+  const handleExportOfficialHwpx = async () => {
+    setErrorMessage('');
+    setExportingDoc('official');
+    try {
+      const bytes = await buildOfficialExamHwpx(items, params, officialOptions);
+      const blob = new Blob([new Uint8Array(bytes)], { type: HWPX_MIME });
+      const baseName = sanitizeFilename(params.assessmentTitle);
+      const filename = `[원안_양식]_${baseName}_문제지.hwpx`;
+      triggerBlobDownload(blob, filename);
+      showExportBanner(
+        `'${filename}' 파일이 다운로드되었습니다. (B4 2단 원안 양식 · 표지/꼬리말/저작권란 적용)`
+      );
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : '원안 양식 문제지 HWPX 생성에 실패했습니다.'
+      );
+    } finally {
+      setExportingDoc(null);
+    }
+  };
+
   const handleExportMasterHwpx = async () => {
     setErrorMessage('');
     setExportingDoc('master');
@@ -243,31 +296,12 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
       });
       const blob = new Blob([new Uint8Array(bytes)], { type: HWPX_MIME });
       const baseName = sanitizeFilename(params.assessmentTitle);
-      const filename = `${baseName}_교사용_출제원안지.hwpx`;
+      const filename = `${baseName}_교사용_문항명세_채점기준서.hwpx`;
       triggerBlobDownload(blob, filename);
       showExportBanner(`'${filename}' 파일이 다운로드되었습니다.`);
     } catch (err) {
       setErrorMessage(
-        err instanceof Error ? err.message : '교사용 원안지 HWPX 생성에 실패했습니다.'
-      );
-    } finally {
-      setExportingDoc(null);
-    }
-  };
-
-  const handleExportStudentHwpx = async () => {
-    setErrorMessage('');
-    setExportingDoc('student');
-    try {
-      const bytes = await buildStudentExamHwpx(items, params);
-      const blob = new Blob([new Uint8Array(bytes)], { type: HWPX_MIME });
-      const baseName = sanitizeFilename(params.assessmentTitle);
-      const filename = `${baseName}_학생용_시험지_활동지.hwpx`;
-      triggerBlobDownload(blob, filename);
-      showExportBanner(`'${filename}' 파일이 다운로드되었습니다.`);
-    } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : '학생용 시험지 HWPX 생성에 실패했습니다.'
+        err instanceof Error ? err.message : '교사용 문항 명세서 HWPX 생성에 실패했습니다.'
       );
     } finally {
       setExportingDoc(null);
@@ -312,8 +346,14 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
           // 개별 음원만 포함하여 계속 진행
         }
       }
-      setProgressText('한글(HWPX) 3종 및 MP3 음원 통합 ZIP 압축 중...');
-      const zipBlob = await buildFullPackageZip(items, params, mergedForZip);
+      setProgressText('한글(HWPX) 3종(원안 양식 포함) 및 MP3 음원 통합 ZIP 압축 중...');
+      const zipBlob = await buildFullPackageZip(
+        items,
+        params,
+        mergedForZip,
+        officialOptions,
+        { includeTranslation, includeExplanation }
+      );
       const baseName = sanitizeFilename(params.assessmentTitle);
       const filename = `${baseName}_시험진행_통합패키지.zip`;
       triggerBlobDownload(zipBlob, filename);
@@ -430,10 +470,10 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
             <FileText className="w-5 h-5 text-blue-200" />
             <div>
               <h3 className="text-base font-extrabold">
-                1. 한글(HWPX) 문서 출력 · 시험지 인쇄 파일 다운로드
+                1. 한글(HWPX) 문서 출력 · 정기고사 원안 양식 다운로드
               </h3>
               <p className="text-xs text-blue-100 mt-0.5">
-                한컴오피스 한글에서 표·채점기준·문항 상자가 깨지지 않고 그대로 편집 가능한 정식 .hwpx 파일로 출력합니다.
+                업로드하신 학교 정기고사 [원안_양식] (문제지 표지 · B4 2단 테두리 · 한글 자동 문제번호 · 꼬리말 · 저작권 상자) 그대로 .hwpx를 출력합니다.
               </p>
             </div>
           </div>
@@ -446,7 +486,7 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
                 onChange={(e) => setIncludeTranslation(e.target.checked)}
                 className="rounded text-blue-500 focus:ring-0"
               />
-              <span>원안지에 우리말 해석 포함</span>
+              <span>교사용 명세서에 우리말 해석 포함</span>
             </label>
             <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
               <input
@@ -455,71 +495,216 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
                 onChange={(e) => setIncludeExplanation(e.target.checked)}
                 className="rounded text-blue-500 focus:ring-0"
               />
-              <span>원안지에 출제 해설 포함</span>
+              <span>교사용 명세서에 출제 해설 포함</span>
             </label>
           </div>
         </div>
 
+        {/* [원안 양식] 표지 · 꼬리말 · 번호 체계 세부 설정 패널 */}
+        <div className="px-5 sm:px-6 pt-5 pb-1">
+          <div className="rounded-2xl border border-blue-200/80 bg-gradient-to-br from-blue-50/70 via-white to-slate-50 p-4 space-y-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-[#09396A] text-white">
+                  원안 양식 설정
+                </span>
+                <span className="text-xs sm:text-sm font-extrabold text-slate-900">
+                  문제지 표지 · 꼬리말 · 저작권란 자동 기입 정보
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <label className="inline-flex items-center gap-1.5 font-bold text-[#09396A] bg-white border border-blue-200 px-2.5 py-1 rounded-lg cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={includeCoverPage}
+                    onChange={(e) => setIncludeCoverPage(e.target.checked)}
+                    className="rounded text-[#09396A] focus:ring-0"
+                  />
+                  <span>1쪽 문제지 표지 포함</span>
+                </label>
+
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold">
+                  선택형 {examComp.mcqCount}문항({examComp.mcqPoints}점)
+                </span>
+                {examComp.shortAnswerCount > 0 && (
+                  <span className="px-2.5 py-1 rounded-lg bg-blue-100/80 text-[#09396A] font-semibold">
+                    단답형 {examComp.shortAnswerCount}문항({examComp.shortAnswerPoints}점) · 5열 표 적용
+                  </span>
+                )}
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold">
+                  서술형 {examComp.essayCount}문항({examComp.essayPoints}점)
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
+                  예상 본문 {examComp.estimatedBodyPages}면 (B4 2단)
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  표지 제목
+                </label>
+                <input
+                  type="text"
+                  value={coverTitle}
+                  onChange={(e) => setCoverTitle(e.target.value)}
+                  disabled={!includeCoverPage}
+                  placeholder="2026학년도 2학기 기말시험 문제지 표지"
+                  className="w-full rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  시험일자 (좌상단 상자)
+                </label>
+                <input
+                  type="text"
+                  value={examDate}
+                  onChange={(e) => setExamDate(e.target.value)}
+                  disabled={!includeCoverPage}
+                  placeholder="2026. 12. 10."
+                  className="w-full rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    교시
+                  </label>
+                  <input
+                    type="text"
+                    value={examPeriod}
+                    onChange={(e) => setExamPeriod(e.target.value)}
+                    disabled={!includeCoverPage}
+                    placeholder="1"
+                    className="w-full rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-800 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    과목코드
+                  </label>
+                  <input
+                    type="text"
+                    value={subjectCode}
+                    onChange={(e) => setSubjectCode(e.target.value)}
+                    disabled={!includeCoverPage}
+                    placeholder="01"
+                    className="w-full rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-800 text-center"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  학교명 (표지·꼬리말·저작권란)
+                </label>
+                <input
+                  type="text"
+                  value={schoolNameInput}
+                  onChange={(e) => setSchoolNameInput(e.target.value)}
+                  placeholder="대구서부고등학교"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    면 수(표지 제외)
+                  </label>
+                  <input
+                    type="text"
+                    value={pageCountOverride}
+                    onChange={(e) => setPageCountOverride(e.target.value)}
+                    placeholder={`자동(${examComp.estimatedBodyPages})`}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-800 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    문항 번호 체계
+                  </label>
+                  <select
+                    value={numberingMode}
+                    onChange={(e) =>
+                      setNumberingMode(e.target.value as OfficialNumberingMode)
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-1.5 py-1.5 text-[11px] font-semibold text-slate-800"
+                  >
+                    <option value="exam_standard">선택형→[서답형]</option>
+                    <option value="sequential">1번~N번 순차</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="p-5 sm:p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* 카드 1: 교사용 출제 원안지 */}
-          <div className="rounded-2xl border-2 border-blue-100 bg-blue-50/40 p-4 flex flex-col justify-between gap-4 hover:border-[#357DC7] transition">
+          {/* 카드 1: 업로드된 [원안 양식] 정기고사 문제지 */}
+          <div className="rounded-2xl border-2 border-[#357DC7] bg-blue-50/50 p-4 flex flex-col justify-between gap-4 shadow-sm hover:border-[#09396A] transition">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-[#09396A] text-white">
-                  대구형 공식 원안 서식
+                  학교 정기고사 원안 양식 · B4 2단
                 </span>
                 <FileCheck2 className="w-5 h-5 text-[#09396A]" />
               </div>
               <h4 className="text-base font-extrabold text-slate-900">
-                교사용 출제 원안지 (.hwpx)
+                [원안 양식] 정기고사 문제지 (.hwpx)
               </h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                자료집 예시 서식(가. 운영 방안 + 나. 문항 명세표 + 성취기준·수행지시어·어휘 수 + 안내문 상자 + 4열 채점기준표) 전체 수록
+                문제지 표지(시험일자·교시·과목코드·배점표·유의사항 1~5) + B4 2단 테두리 본문 + 한글 자동 문제번호(13pt 굵게, 1. / [서답형1]) + &lt;보기&gt;·포스터 상자 + 꼬리말 + 우하단 저작권 상자 완비
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleExportOfficialHwpx}
+              disabled={exportingDoc !== null || items.length === 0}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#09396A] hover:bg-[#072B50] disabled:opacity-50 text-white text-xs font-extrabold transition"
+            >
+              {exportingDoc === 'official' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              [원안 양식] 문제지 HWPX 다운로드
+            </button>
+          </div>
+
+          {/* 카드 2: 교사용 문항 명세 · 채점기준서 */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 flex flex-col justify-between gap-4 hover:border-[#357DC7] transition">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                  현장지원단 자료집 서식
+                </span>
+                <FileText className="w-5 h-5 text-emerald-700" />
+              </div>
+              <h4 className="text-base font-extrabold text-slate-900">
+                교사용 문항 명세 · 채점기준서 (.hwpx)
+              </h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                자료집 예시 서식(가. 운영 방안 + 나. 문항 명세표 + 성취기준·수행지시어·어휘 수 + 듣기 대본 + 4열 세부 채점기준표) 전체 수록
               </p>
             </div>
             <button
               type="button"
               onClick={handleExportMasterHwpx}
               disabled={exportingDoc !== null || items.length === 0}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#09396A] hover:bg-[#072B50] disabled:opacity-50 text-white text-xs font-extrabold transition"
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-extrabold transition"
             >
               {exportingDoc === 'master' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Download className="w-4 h-4" />
               )}
-              교사용 원안지 HWPX 다운로드
-            </button>
-          </div>
-
-          {/* 카드 2: 학생 배부용 시험지/활동지 */}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 flex flex-col justify-between gap-4 hover:border-[#357DC7] transition">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                  학생 인쇄·배부용
-                </span>
-                <FileText className="w-5 h-5 text-emerald-700" />
-              </div>
-              <h4 className="text-base font-extrabold text-slate-900">
-                학생용 시험지 · 활동지 (.hwpx)
-              </h4>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                대본·정답을 제외하고 학번·성명란, 발문·배점, 포스터 빈칸 상자, 서답형 답안 작성란 및 5지선다 선택지만 깔끔하게 배치
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleExportStudentHwpx}
-              disabled={exportingDoc !== null || items.length === 0}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-extrabold transition"
-            >
-              {exportingDoc === 'student' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Download className="w-4 h-4" />
-              )}
-              학생용 시험지 HWPX 다운로드
+              교사용 문항 명세서 HWPX 다운로드
             </button>
           </div>
 

@@ -71,8 +71,9 @@ if (!hasOrigin.ok) {
 run('git', ['checkout', '-B', 'main'], rootDir);
 run('git', ['add', '-A'], rootDir);
 const status = run('git', ['status', '--porcelain'], rootDir);
+const commitMsg = process.argv[2] || 'Update DELTA listening studio: official exam HWPX template';
 if (status) {
-  run('git', ['commit', '-m', 'Initial commit: DELTA listening studio'], rootDir);
+  run('git', ['commit', '-m', commitMsg], rootDir);
 }
 run('git', ['push', '-u', 'origin', 'main', '--force'], rootDir);
 
