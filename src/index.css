@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #222B38;
+  --navy: #09396A;
+  --muted: #64748B;
+  --line: #D9E2EC;
+  --bg: #F5F7FA;
+  --card: #FFFFFF;
+  --pri: #357DC7;
+  --red: #E6002D;
+  --soft: #EAF2FB;
+}
+
+body {
+  margin: 0;
+  font-family: "NanumSquare", "NanumSquareR", "Pretendard", "Nanum Gothic", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.delta-brand-border {
+  border-bottom: 3px solid var(--pri);
+  border-image: linear-gradient(90deg, var(--red) 0%, var(--pri) 45%, var(--navy) 100%) 1;
+}
+
+.delta-brand-band {
+  height: 4px;
+  background: linear-gradient(90deg, var(--red) 0%, var(--pri) 55%, var(--navy) 100%);
+  border-radius: 9999px;
+}
+
+.delta-wordmark {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  background: linear-gradient(90deg, var(--red), var(--pri));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Official Korean school document spec table look */
+.spec-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 2px solid #1E293B;
+  border-bottom: 2px solid #1E293B;
+  font-size: 14.5px;
+}
+
+.spec-table th,
+.spec-table td {
+  border: 1px solid #CBD5E1;
+  padding: 9px 12px;
+  vertical-align: middle;
+}
+
+.spec-table th {
+  background-color: #F1F5F9;
+  font-weight: 700;
+  color: #1E293B;
+  text-align: center;
+  width: 165px;
+}
+
+.spec-table .section-banner {
+  background-color: #E2E8F0;
+  font-weight: 800;
+  color: #0F172A;
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+@media (max-width: 640px) {
+  .spec-table {
+    font-size: 13px;
+  }
+  .spec-table th {
+    width: 98px;
+    padding: 7px 8px;
+    font-size: 12px;
+  }
+  .spec-table td {
+    padding: 7px 8px;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #FFFFFF !important;
+  }
+}
