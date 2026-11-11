@@ -758,7 +758,9 @@ export interface OfficialExamComposition {
 
 export function deriveDefaultCoverTitle(assessmentTitle?: string): string {
   const raw = (assessmentTitle || '').trim();
-  if (!raw) return '2026학년도 2학기 기말시험 문제지 표지';
+  if (!raw || raw === '2026학년도 1학기 대구형 영어듣기 평가 출제 원안') {
+    return '2026학년도 2학기 기말시험 문제지 표지';
+  }
   if (raw.endsWith('문제지 표지')) return raw;
   const stripped = raw
     .replace(/\s*(출제\s*원안지|출제\s*원안|출제\s*문항|원안지|원안|문제지)\s*$/g, '')
@@ -795,9 +797,9 @@ function classifyOptionRowLayout(options: string[]): 1 | 2 | 3 | 5 {
       .trim()
   );
   const maxW = cleaned.reduce((acc, cur) => Math.max(acc, visualWidthUnits(cur)), 0);
-  if (maxW <= 7.5) return 1;
-  if (maxW <= 14.5) return 2;
-  if (maxW <= 22.5) return 3;
+  if (maxW <= 6.0) return 1;
+  if (maxW <= 12.0) return 2;
+  if (maxW <= 19.5) return 3;
   return 5;
 }
 
@@ -1150,6 +1152,7 @@ export async function buildOfficialExamHwpx(
       : comp.estimatedBodyPages;
 
   const pkg = await HwpxPackage.open(getExamPaperTemplateHwpxBytes());
+  const headerEl = pkg.getXml('Contents/header.xml');
   const sec0El = pkg.getXml('Contents/section0.xml');
   const sec1El = pkg.getXml('Contents/section1.xml');
   const doc0 = sec0El.ownerDocument!;
@@ -1200,9 +1203,58 @@ export async function buildOfficialExamHwpx(
   }
 
   // -------------------------------------------------------------------------
-  // B. Section 0 (문제지 표지) 업데이트
+  // B. Section 0 (문제지 표지) 업데이트 — B4 1쪽 내 학교명까지 여유 있게 안착 보장
   // -------------------------------------------------------------------------
   if (includeCoverPage) {
+    // 0) 긴 표지 제목·과목명·학교명도 줄바꿈(2줄 넘침) 없이 무조건 1줄에 들어가도록 글자 크기/자간 자동 보정
+    const coverTitleWidth = visualWidthUnits(coverTitle);
+    if (coverTitleWidth > 38) {
+      const charPr19 = domFindByAttr(headerEl, 'charPr', 'id', '19');
+      if (charPr19) {
+        const scaledH = Math.max(1700, Math.floor((3000 * 38) / coverTitleWidth));
+        charPr19.setAttribute('height', String(scaledH));
+      }
+    }
+
+    const gradeSubjDisplay = `( ${gradeNum} ) 학년  (  ${subjectName}  )`;
+    const gradeSubjWidth = visualWidthUnits(gradeSubjDisplay);
+    if (gradeSubjWidth > 38) {
+      const scaledSubjH = Math.max(1700, Math.floor((2900 * 38) / gradeSubjWidth));
+      for (const cid of ['18', '21']) {
+        const cp = domFindByAttr(headerEl, 'charPr', 'id', cid);
+        if (cp) cp.setAttribute('height', String(scaledSubjH));
+      }
+    }
+
+    const schoolWidth = visualWidthUnits(schoolName);
+    if (schoolWidth > 22) {
+      const charPr20 = domFindByAttr(headerEl, 'charPr', 'id', '20');
+      if (charPr20) {
+        const spacingEl = domChildElements(charPr20, 'spacing')[0];
+        const targetSpacing = Math.max(
+          0,
+          Math.min(50, Math.floor((35 / schoolWidth - 1) * 100))
+        );
+        if (spacingEl) {
+          for (const lang of [
+            'hangul',
+            'latin',
+            'hanja',
+            'japanese',
+            'other',
+            'symbol',
+            'user',
+          ]) {
+            spacingEl.setAttribute(lang, String(targetSpacing));
+          }
+        }
+        if (schoolWidth > 35) {
+          const scaledSchoolH = Math.max(2000, Math.floor((3300 * 35) / schoolWidth));
+          charPr20.setAttribute('height', String(scaledSchoolH));
+        }
+      }
+    }
+
     // 1) 우측 상단 교시 상자 (rect id="1336371180")
     const periodRect = domFindByAttr(sec0El, 'rect', 'id', '1336371180');
     if (periodRect) {
@@ -1231,9 +1283,33 @@ export async function buildOfficialExamHwpx(
       }
     }
 
-    // 3) 표지 제목 및 ( 학년 ) 학년 ( 과목명 ) 문단
+    // 3) 표지 상단 불필요 공백 축소 + 제목 및 ( 학년 ) 학년 ( 과목명 ) 문단 설정
     const directParas0 = domChildElements(sec0El, 'p');
-    const titleParas = directParas0.filter((p) => p.getAttribute('paraPrIDRef') === '13');
+
+    // 첫 문단(secPr 포함)의 129칸 공백(2줄 3,520 차지)을 1칸 공백(1줄 1,760)으로 정리
+    if (directParas0[0]) {
+      const p0Runs = domChildElements(directParas0[0], 'run');
+      if (p0Runs[1]) {
+        domClearChildren(p0Runs[1]);
+        const t0 = doc0.createElementNS(HP_NS, 'hp:t');
+        t0.appendChild(doc0.createTextNode(' '));
+        p0Runs[1].appendChild(t0);
+      }
+    }
+    // 상단 시험일자 상자와 제목 사이의 빈 줄 4개 중 1개 제거하여 상하 균형 확보
+    if (
+      directParas0[5] &&
+      directParas0[5].getAttribute('paraPrIDRef') === '2' &&
+      domFindAll(directParas0[5], 'rect').length === 0 &&
+      domFindAll(directParas0[5], 'tbl').length === 0 &&
+      !(directParas0[5].textContent || '').trim()
+    ) {
+      sec0El.removeChild(directParas0[5]);
+    }
+
+    const titleParas = domChildElements(sec0El, 'p').filter(
+      (p) => p.getAttribute('paraPrIDRef') === '13'
+    );
     if (titleParas[0]) {
       domClearChildren(titleParas[0]);
       const rTitle = doc0.createElementNS(HP_NS, 'hp:run');
@@ -1246,9 +1322,9 @@ export async function buildOfficialExamHwpx(
     if (titleParas[1]) {
       domClearChildren(titleParas[1]);
       const runsSpec: Array<{ charPrId: string; text: string }> = [
-        { charPrId: '18', text: `( ${gradeNum} ) 학년  (   ` },
+        { charPrId: '18', text: `( ${gradeNum} ) 학년  (  ` },
         { charPrId: '21', text: subjectName },
-        { charPrId: '18', text: '   )' },
+        { charPrId: '18', text: '  )' },
       ];
       for (const rs of runsSpec) {
         const rEl = doc0.createElementNS(HP_NS, 'hp:run');
@@ -1308,22 +1384,55 @@ export async function buildOfficialExamHwpx(
       }
     }
 
-    // 두 표 중 하나를 삭제했으므로 바깥 유의사항 상자 높이를 원래 1표 기준(43889)으로 복원
+    // 두 표 중 하나를 삭제했으므로 바깥 유의사항 상자 끝 빈 줄을 정리하고 표·셀 높이를 42,200으로 맞춤
     if (tblOuter) {
+      const outerTr = domChildElements(tblOuter, 'tr')[0];
+      const outerTc = outerTr ? domChildElements(outerTr, 'tc')[0] : null;
+      const outerSubList = outerTc ? domChildElements(outerTc, 'subList')[0] : null;
+      if (outerSubList) {
+        const subParas = domChildElements(outerSubList, 'p');
+        const trailingEmpty = subParas[subParas.length - 1];
+        if (
+          trailingEmpty &&
+          !(trailingEmpty.textContent || '').trim() &&
+          domFindAll(trailingEmpty, 'tbl').length === 0 &&
+          domFindAll(trailingEmpty, 'ctrl').length === 0
+        ) {
+          outerSubList.removeChild(trailingEmpty);
+        }
+      }
       const outerSz = domChildElements(tblOuter, 'sz')[0];
       if (outerSz) {
-        outerSz.setAttribute('height', '43889');
+        outerSz.setAttribute('height', '42200');
+        outerSz.setAttribute('protect', '0');
+      }
+      if (outerTc) {
+        const outerCellSz = domChildElements(outerTc, 'cellSz')[0];
+        if (outerCellSz) {
+          outerCellSz.setAttribute('height', '42200');
+        }
       }
     }
 
-    // 5) 하단 학교명 문단 (charPrIDRef="20"에 자간 50%가 내장되어 자동 균등 배치됨)
-    const lastPara0 = directParas0[directParas0.length - 1];
+    // 5) 하단 학교명 문단 당기기:
+    // 기존 템플릿의 과도한 35pt(charPr="10", 5,600) 빈 문단을 16pt(charPr="9", 2,560)로 줄이고
+    // 중복 공백 삽입 없이 학교명을 표지 1쪽 하단(약 75,700 / 94,961 hwpUnit, 하단 여유 약 6.8cm)에 안정 배치
+    const updatedParas0 = domChildElements(sec0El, 'p');
+    const preSchoolSpacer = updatedParas0[updatedParas0.length - 2];
+    if (
+      preSchoolSpacer &&
+      !(preSchoolSpacer.textContent || '').trim() &&
+      domFindAll(preSchoolSpacer, 'tbl').length === 0
+    ) {
+      preSchoolSpacer.setAttribute('paraPrIDRef', '4');
+      domClearChildren(preSchoolSpacer);
+      const rSpacer = doc0.createElementNS(HP_NS, 'hp:run');
+      rSpacer.setAttribute('charPrIDRef', '9');
+      preSchoolSpacer.appendChild(rSpacer);
+    }
+
+    const lastPara0 = updatedParas0[updatedParas0.length - 1];
     if (lastPara0) {
-      // 바깥 표 높이 복원에 맞춰 하단 학교명 위에 여백 1줄 보강하여 B4 표지 하단 균형 유지
-      sec0El.insertBefore(
-        createHpPara(doc0, '4', '0', [{ charPrId: '10' }]),
-        lastPara0
-      );
       domClearChildren(lastPara0);
       const rSchool = doc0.createElementNS(HP_NS, 'hp:run');
       rSchool.setAttribute('charPrIDRef', '20');
@@ -1351,6 +1460,14 @@ export async function buildOfficialExamHwpx(
     ? (domChildElements(origFirstRun, 'ctrl')[0]?.cloneNode(true) as Element | undefined)
     : undefined;
 
+  // 본문 구역은 표지 유무와 무관하게 항상 쪽 번호를 1부터 새로 시작 (1 / N 보장)
+  if (secPrClone) {
+    const startNumEl = domChildElements(secPrClone, 'startNum')[0];
+    if (startNumEl) {
+      startNumEl.setAttribute('page', '1');
+    }
+  }
+
   // 템플릿 내 원본 상자 원형 추출 (<보기>/제시문 박스, 3x3 <보 기> 박스, 우하단 저작권 박스)
   const rawBoxTbl = domFindByAttr(sec1El, 'tbl', 'id', '1491212881');
   const rawBogiTbl = domFindByAttr(sec1El, 'tbl', 'id', '1491212882');
@@ -1367,7 +1484,7 @@ export async function buildOfficialExamHwpx(
     sec1El.removeChild(p);
   }
 
-  // 1) 첫 문단 P0: B4 2단 구역 정의(secPr + colPr) + (상단 10pt 한 줄 비우기)
+  // 1) 첫 문단 P0: B4 2단 구역 정의(secPr + colPr) + (상단 10pt 한 줄 비우기, hideFirstEmptyLine 회피용 공백 1칸)
   const p0SetupNodes: Node[] = [];
   if (secPrClone) p0SetupNodes.push(secPrClone);
   if (colPrCtrlClone) p0SetupNodes.push(colPrCtrlClone);
@@ -1377,7 +1494,7 @@ export async function buildOfficialExamHwpx(
   sec1El.appendChild(
     createHpPara(doc1, '33', '0', [
       { charPrId: '34', nodes: p0SetupNodes },
-      { charPrId: '55', text: '' },
+      { charPrId: '55', text: ' ' },
     ])
   );
 
@@ -1657,8 +1774,15 @@ export async function buildOfficialExamHwpx(
       posEl.setAttribute('horzRelTo', 'PAGE');
       posEl.setAttribute('vertAlign', 'BOTTOM');
       posEl.setAttribute('horzAlign', 'RIGHT');
-      posEl.setAttribute('vertOffset', '284');
-      posEl.setAttribute('horzOffset', '424');
+      posEl.setAttribute('vertOffset', '0');
+      posEl.setAttribute('horzOffset', '0');
+    }
+    const copyOutMargin = domChildElements(copyClone, 'outMargin')[0];
+    if (copyOutMargin) {
+      copyOutMargin.setAttribute('left', '424');
+      copyOutMargin.setAttribute('right', '424');
+      copyOutMargin.setAttribute('top', '284');
+      copyOutMargin.setAttribute('bottom', '284');
     }
 
     const copySubList = domFindAll(copyClone, 'subList')[0];
@@ -1702,13 +1826,13 @@ export async function buildOfficialExamHwpx(
   }
 
   if (includeCoverPage) {
+    pkg.setXml('Contents/header.xml', headerEl);
     pkg.setXml('Contents/section1.xml', sec1El);
     pkg.setXml('Contents/content.hpf', hpfEl);
   } else {
     // 표지 생략 시 본문을 section0.xml로 단일 구역화하여 모든 버전의 한글에서 깔끔하게 열리도록 처리
     pkg.setXml('Contents/section0.xml', sec1El);
 
-    const headerEl = pkg.getXml('Contents/header.xml');
     headerEl.setAttribute('secCnt', '1');
     pkg.setXml('Contents/header.xml', headerEl);
 
