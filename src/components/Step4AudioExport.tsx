@@ -1060,7 +1060,17 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
 
           {/* 문항별 개별 음성 생성 및 MP3 다운로드 리스트 */}
           <div className="space-y-3">
-            {items.map((item) => {
+            {items.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-8 text-center space-y-2">
+                <p className="text-sm font-bold text-slate-700">
+                  현재 출제된 문항이 없습니다.
+                </p>
+                <p className="text-xs text-slate-500">
+                  2단계 또는 3단계에서 문항을 출제한 뒤 원어민 음원 및 한글(HWPX) 문서를 출력할 수 있습니다.
+                </p>
+              </div>
+            ) : (
+              items.map((item) => {
               const wc = countTranscriptWords(item.transcript);
               const estSec = estimateDurationSec(item.transcript, ttsConfig.speed);
               const speakers = detectSpeakers(item.transcript);
@@ -1094,12 +1104,12 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
                           [{item.directive}] {item.skill}
                         </span>
                         <span className="text-[11px] text-slate-500">
-                          · 화자 {speakers.join(' / ')} · {wc}단어 · 예상{' '}
+                          · 화자 {speakers.length ? speakers.join(' / ') : '미지정'} · {wc}단어 · 예상{' '}
                           {formatDuration(estSec)}
                         </span>
                       </div>
                       <p className="text-xs text-slate-600 truncate">
-                        {item.questionPrompt}
+                        {item.questionPrompt || '(문항 발문이 아직 입력되지 않았습니다)'}
                       </p>
                     </div>
 
@@ -1170,7 +1180,8 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
                   </details>
                 </div>
               );
-            })}
+            })
+            )}
           </div>
         </div>
       </section>

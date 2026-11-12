@@ -3,10 +3,13 @@ import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import {
   GenerationParams,
   ListeningItem,
+  QuestionFormatType,
   TtsConfig,
 } from './types/assessment';
 import {
+  QUESTION_FORMATS,
   VOCAB_LEVELS,
+  getAchievementStandardsForSubject,
   getDefaultEnglishOptionSkills,
   getListeningPrimaryStandardsForSubject,
 } from './data/taxonomy';
@@ -104,7 +107,7 @@ export const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [apiKey, setApiKey] = useState<string>(initialKey);
   const [params, setParams] = useState<GenerationParams>(INITIAL_PARAMS);
-  const [items, setItems] = useState<ListeningItem[]>(() => cloneSampleItems());
+  const [items, setItems] = useState<ListeningItem[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
 
   useEffect(() => {
@@ -176,7 +179,7 @@ export const App: React.FC = () => {
     if (!apiKey.trim()) {
       showNotice(
         'error',
-        'AI 자동 출제를 위해 우측 상단 [API 키 설정] 버튼에서 Gemini API 키를 먼저 입력해 주세요. (키 없이 예시 문항 편집·출력은 바로 가능합니다)',
+        'AI 자동 출제를 위해 우측 상단 [API 키 설정] 버튼에서 Gemini API 키를 먼저 입력해 주세요. (API 키 없이도 [직접 문항 출제 및 편집하기]로 바로 작성·출력할 수 있습니다)',
         7000
       );
       return;
@@ -240,80 +243,111 @@ export const App: React.FC = () => {
     );
   };
 
-  const handleAddItem = () => {
+  const createBlankItem = (itemNo: number, includeOpGuide: boolean): ListeningItem => {
     const vocabMeta =
       VOCAB_LEVELS.find((v) => v.id === params.vocabLevelId) || VOCAB_LEVELS[1];
-    const standards = getListeningPrimaryStandardsForSubject(params.subject);
-    const isConstructed = params.mode === 'ib';
+    const allStandards = getAchievementStandardsForSubject(params.subject);
+    const primaryStandards = getListeningPrimaryStandardsForSubject(params.subject);
 
-    const newItem: ListeningItem = {
-      id: `manual-${Date.now()}`,
-      itemNo: items.length + 1,
+    let questionFormat: QuestionFormatType = 'mcq_5';
+    if (params.mode === 'ib') {
+      if (params.questionFormatMode === 'counts' && params.questionFormatCounts) {
+        const firstCountFmt = QUESTION_FORMATS.find(
+          (f) => Number(params.questionFormatCounts?.[f.id] || 0) > 0
+        );
+        questionFormat = firstCountFmt?.id || params.questionFormats[0] || 'short_kr';
+      } else {
+        questionFormat = params.questionFormats[0] || 'short_kr';
+      }
+    }
+    const isConstructed = questionFormat !== 'mcq_5';
+
+    const selectedStdText =
+      params.selectedStandards[0] ||
+      primaryStandards[0]?.text ||
+      allStandards[0]?.text ||
+      '[10공영1-01-01] 말이나 글에 포함된 세부 정보를 파악한다.';
+    const matchedStd = allStandards.find((s) => s.text === selectedStdText);
+
+    const skill =
+      params.selectedSkills[0] ||
+      (params.mode === 'ib'
+        ? matchedStd?.recommendedSkillIb || '세부 정보 파악'
+        : matchedStd?.recommendedSkillStd || '목적');
+    const directive = params.selectedDirective || matchedStd?.directive || '파악';
+    const now = Date.now();
+
+    return {
+      id: `manual-${now}-${itemNo}`,
+      itemNo,
       mode: params.mode,
-      questionFormat: isConstructed ? 'short_kr' : 'mcq_5',
-      includeOperationGuide: items.length === 0 && params.includeOperationGuide,
+      questionFormat,
+      includeOperationGuide: includeOpGuide,
       operationGuide: { ...DEFAULT_OPERATION_GUIDE },
       gradeSubject: `${params.grade} / ${params.subject}`,
-      evalMethod: params.evalPurpose,
-      achievementStandard:
-        standards[0]?.text || '[10공영1-01-01] 말이나 글에 포함된 세부 정보를 파악한다.',
-      directive: params.selectedDirective || '파악',
-      skill: isConstructed ? '세부 정보 파악' : '목적',
+      evalMethod: isConstructed
+        ? '정기시험 혹은 수행평가(서술형/서답형)'
+        : '정기시험(선택형)',
+      achievementStandard: selectedStdText,
+      directive,
+      skill,
       topic: params.selectedTopics[0] || '학교생활',
-      subtopic: params.selectedSubtopic || '학교행사',
-      expressions: [],
-      structures: [],
+      subtopic: params.selectedSubtopic || '',
+      expressions: [...params.selectedExpressions],
+      structures: [...params.selectedStructures],
       vocabLevelId: params.vocabLevelId,
-      vocabLevelLabel: vocabMeta.label,
-      targetWordCount: params.targetWordCount,
+      vocabLevelLabel: vocabMeta.shortLabel,
+      targetWordCount: 0,
       keyVocab: params.requiredWords,
       difficulty: params.difficulty,
-      taskDescription: isConstructed
-        ? '담화 또는 대화를 듣고 핵심 정보를 파악하여 서술하는 서답형 1문항'
-        : '담화 또는 대화를 듣고 알맞은 답을 고르는 5지선다 선택형 1문항',
-      materialType: '대화문_학교생활/일상',
+      taskDescription: '',
+      materialType: params.textTypes[0] || '대화문',
       source: '자체 제작',
-      transcript: `W: Hi, Minsu. Are you ready for tomorrow's English presentation?\nM: Almost, but I'm still checking the slides in the computer room.`,
-      koreanTranslation:
-        '여: 안녕, 민수야. 내일 영어 발표 준비는 다 됐니?\n남: 거의 다 됐는데, 컴퓨터실에서 슬라이드를 아직 점검하고 있어.',
-      questionPrompt: isConstructed
-        ? '대화를 듣고, 남자가 현재 컴퓨터실에 있는 이유를 우리말로 쓰시오.'
-        : '대화를 듣고, 남자가 하고 있는 일로 가장 적절한 것을 고르시오.',
+      transcript: '',
+      koreanTranslation: '',
+      questionPrompt: '',
       stimulusTitle: '',
       stimulusBody: '',
-      options: isConstructed
-        ? ['', '', '', '', '']
-        : [
-            '발표 슬라이드 점검하기',
-            '도서관 도서 반납하기',
-            '동아리 포스터 인쇄하기',
-            '진로 상담 신청하기',
-            '영어 듣기 과제 제출하기',
-          ],
+      options: ['', '', '', '', ''],
       isConstructedResponse: isConstructed,
       correctChoice: 1,
-      modelAnswer: isConstructed ? '내일 있을 영어 발표 슬라이드를 점검하기 위해서이다.' : '',
+      modelAnswer: '',
       totalMarks: isConstructed ? 3 : 2,
       rubricRows: isConstructed
         ? [
             {
-              id: `rub-${Date.now()}-1`,
+              id: `rub-${now}-1`,
               scoreLabel: '3점',
-              criteria: '발표 슬라이드를 점검하고 있다는 핵심 내용을 정확히 서술한 경우',
+              criteria: '',
             },
             {
-              id: `rub-${Date.now()}-2`,
+              id: `rub-${now}-2`,
               scoreLabel: '0점',
-              criteria: '핵심 내용과 무관하거나 미기재한 경우',
+              criteria: '',
             },
           ]
         : [],
-      explanation: '남자가 내일 영어 발표에 사용할 슬라이드를 점검 중이라고 말하고 있다.',
+      explanation: '',
     };
+  };
 
+  const handleAddItem = () => {
+    const newItem = createBlankItem(
+      items.length + 1,
+      items.length === 0 && params.includeOperationGuide
+    );
     const next = renumberItems([...items, newItem]);
     setItems(next);
     setActiveIndex(next.length - 1);
+  };
+
+  const handleDirectCreateOrEdit = () => {
+    if (items.length === 0) {
+      const firstItem = createBlankItem(1, params.includeOperationGuide);
+      setItems([firstItem]);
+      setActiveIndex(0);
+    }
+    setCurrentStep(3);
   };
 
   const handleDuplicateItem = (id: string) => {
@@ -413,6 +447,10 @@ export const App: React.FC = () => {
   };
 
   const handleExportJson = () => {
+    if (items.length === 0) {
+      showNotice('info', '저장할 문항이 없습니다. 먼저 문항을 출제하거나 작성해 주세요.');
+      return;
+    }
     const cleanItems = items.map(
       ({ audioBlob: _b, audioUrl: _u, ...serializable }) => serializable
     );
@@ -521,10 +559,9 @@ export const App: React.FC = () => {
             onChangeParams={handleChangeParams}
             onBack={() => setCurrentStep(1)}
             onGenerate={handleGenerate}
-            onSkipToEditor={() => setCurrentStep(3)}
+            onSkipToEditor={handleDirectCreateOrEdit}
             generating={generating}
             statusMessage={statusMessage}
-            existingItemCount={items.length}
           />
         )}
 

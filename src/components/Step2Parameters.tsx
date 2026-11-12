@@ -49,7 +49,6 @@ interface Step2Props {
   onSkipToEditor: () => void;
   generating: boolean;
   statusMessage: string;
-  existingItemCount: number;
 }
 
 function sumCounts(map: Record<string, number | undefined>): number {
@@ -133,7 +132,6 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   onSkipToEditor,
   generating,
   statusMessage,
-  existingItemCount,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [stdDomainTab, setStdDomainTab] = useState<'first' | 'second' | 'all'>('first');
@@ -1762,17 +1760,15 @@ export const Step2Parameters: React.FC<Step2Props> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {existingItemCount > 0 && (
-            <button
-              type="button"
-              disabled={generating}
-              onClick={onSkipToEditor}
-              className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50"
-            >
-              <Edit3 className="w-4 h-4" />
-              현재 문항({existingItemCount}개) 바로 편집하기
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={generating}
+            onClick={onSkipToEditor}
+            className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50"
+          >
+            <Edit3 className="w-4 h-4" />
+            직접 문항 출제 및 편집하기
+          </button>
 
           <button
             type="button"

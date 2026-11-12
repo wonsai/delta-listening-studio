@@ -80,20 +80,23 @@ export const Step3Editor: React.FC<Step3Props> = ({
         <p className="text-base font-bold text-slate-700">
           현재 출제된 문항이 없습니다.
         </p>
-        <div className="flex justify-center gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#09396A] text-white"
-          >
-            2단계에서 AI 자동 출제하기
-          </button>
+        <p className="text-xs text-slate-500">
+          직접 문항을 출제하여 편집하거나, 2단계에서 AI로 문항을 자동 출제할 수 있습니다.
+        </p>
+        <div className="flex flex-wrap justify-center gap-3">
           <button
             type="button"
             onClick={onAddItem}
-            className="px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 text-slate-700"
+            className="px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
           >
-            + 빈 문항 직접 추가하기
+            + 직접 문항 출제하기
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#09396A] hover:bg-[#0c4b8a] text-white transition"
+          >
+            2단계에서 AI 자동 출제하기
           </button>
         </div>
       </div>
@@ -312,16 +315,14 @@ export const Step3Editor: React.FC<Step3Props> = ({
                       >
                         <Copy className="w-3 h-3" />
                       </button>
-                      {items.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteItem(it.id)}
-                          className="p-0.5 rounded hover:bg-rose-500/20 text-rose-400"
-                          title="문항 삭제"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => onDeleteItem(it.id)}
+                        className="p-0.5 rounded hover:bg-rose-500/20 text-rose-400"
+                        title="문항 삭제"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -770,6 +771,7 @@ export const Step3Editor: React.FC<Step3Props> = ({
                         onChange={(e) =>
                           onUpdateItem(item.id, { taskDescription: e.target.value })
                         }
+                        placeholder="예: 담화 또는 대화를 듣고 핵심 정보를 파악하여 서술하는 서답형 1문항"
                         className="w-full px-2 py-1 text-xs rounded border border-slate-200 focus:border-[#357DC7] focus:outline-none resize-y"
                       />
                     </td>
@@ -832,6 +834,7 @@ export const Step3Editor: React.FC<Step3Props> = ({
                             targetWordCount: countTranscriptWords(e.target.value),
                           })
                         }
+                        placeholder={`예:\nW: Hi, Minsu. Are you ready for tomorrow's English presentation?\nM: Almost, but I'm still checking the slides in the computer room.`}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm leading-relaxed font-serif text-slate-900 focus:border-[#357DC7] focus:ring-2 focus:ring-[#357DC7]/20 focus:outline-none resize-y"
                       />
 
@@ -871,6 +874,11 @@ export const Step3Editor: React.FC<Step3Props> = ({
                           value={item.questionPrompt}
                           onChange={(e) =>
                             onUpdateItem(item.id, { questionPrompt: e.target.value })
+                          }
+                          placeholder={
+                            item.isConstructedResponse
+                              ? '예: 대화를 듣고, 남자가 현재 컴퓨터실에 있는 이유를 우리말로 쓰시오.'
+                              : '예: 대화를 듣고, 남자가 하고 있는 일로 가장 적절한 것을 고르시오.'
                           }
                           className="w-full p-2.5 rounded-xl border border-slate-300 text-sm font-semibold text-slate-900 focus:border-[#357DC7] focus:outline-none resize-y"
                         />
@@ -1059,6 +1067,7 @@ export const Step3Editor: React.FC<Step3Props> = ({
                                             e.target.value
                                           )
                                         }
+                                        placeholder="세부 채점 기준을 입력하세요."
                                         className="w-full p-1.5 text-xs rounded border border-slate-200 focus:border-[#357DC7] focus:outline-none resize-y"
                                       />
                                     </td>
