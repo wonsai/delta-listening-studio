@@ -11,6 +11,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  Home,
 } from 'lucide-react';
 import { DAEGU_EDU_LOGO } from '../assets/daeguEduLogo';
 import { testGeminiApiKey } from '../services/geminiService';
@@ -18,6 +19,7 @@ import { testGeminiApiKey } from '../services/geminiService';
 interface HeaderProps {
   currentStep: number;
   onSelectStep: (step: number) => void;
+  onGoIntro?: () => void;
   itemCount: number;
   apiKey: string;
   onSaveApiKey: (key: string) => void;
@@ -36,6 +38,7 @@ const STEPS = [
 export const Header: React.FC<HeaderProps> = ({
   currentStep,
   onSelectStep,
+  onGoIntro,
   itemCount,
   apiKey,
   onSaveApiKey,
@@ -215,6 +218,17 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* 우측 미니 유틸리티 버튼 & 상단 펼치기 */}
               <div className="flex items-center gap-1 shrink-0">
+                {onGoIntro && (
+                  <button
+                    type="button"
+                    onClick={onGoIntro}
+                    className="p-1.5 rounded-lg text-slate-600 hover:text-[#09396A] hover:bg-slate-100 transition"
+                    title="첫 화면으로 이동"
+                  >
+                    <Home className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={onLoadSamples}
@@ -317,6 +331,18 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {onGoIntro && (
+                  <button
+                    type="button"
+                    onClick={onGoIntro}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200 hover:bg-slate-50 transition"
+                    title="첫 화면으로 이동"
+                  >
+                    <Home className="w-3.5 h-3.5" />
+                    첫 화면
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={onLoadSamples}

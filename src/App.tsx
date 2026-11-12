@@ -20,6 +20,7 @@ import {
 import { sanitizeFilename, triggerBlobDownload } from './services/hwpxService';
 import { DAEGU_EDU_LOGO } from './assets/daeguEduLogo';
 import { Header } from './components/Header';
+import { LandingIntro } from './components/LandingIntro';
 import { Step1TypeGrade } from './components/Step1TypeGrade';
 import { Step2Parameters } from './components/Step2Parameters';
 import { Step3Editor } from './components/Step3Editor';
@@ -99,6 +100,7 @@ const INITIAL_PARAMS: GenerationParams = {
 export const App: React.FC = () => {
   const initialKey = getSavedApiKey();
 
+  const [hasEntered, setHasEntered] = useState<boolean>(false);
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [apiKey, setApiKey] = useState<string>(initialKey);
   const [params, setParams] = useState<GenerationParams>(INITIAL_PARAMS);
@@ -107,7 +109,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [currentStep]);
+  }, [currentStep, hasEntered]);
 
   const [generating, setGenerating] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -456,11 +458,16 @@ export const App: React.FC = () => {
     }
   };
 
+  if (!hasEntered) {
+    return <LandingIntro onEnter={() => setHasEntered(true)} />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F5F7FA] text-slate-900">
       <Header
         currentStep={currentStep}
         onSelectStep={setCurrentStep}
+        onGoIntro={() => setHasEntered(false)}
         itemCount={items.length}
         apiKey={apiKey}
         onSaveApiKey={handleSaveApiKey}
@@ -561,7 +568,7 @@ export const App: React.FC = () => {
               className="w-5 h-5 object-contain"
             />
             <span>
-              <strong className="text-[#09396A]">대구광역시교육청 · DELTA 대구형 영어듣기 출제 스튜디오</strong> · 2022 개정 교육과정 성취기준 및 대구 현장지원단 표준 서식 기반
+              <strong className="text-[#09396A]">대구광역시교육청 · DELTA 대구형 영어듣기 출제 스튜디오</strong> · 2022 개정 교육과정 성취기준
             </span>
           </span>
           <span>교사 출제·인쇄 전용 (원어민 MP3 음원 + 한컴 HWPX 문서 출력)</span>
