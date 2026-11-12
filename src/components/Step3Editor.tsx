@@ -27,6 +27,7 @@ import {
   STD_SKILLS,
   VOCAB_LEVELS,
   getAchievementStandardsForSubject,
+  getSubjectInfo,
 } from '../data/taxonomy';
 import { DEFAULT_OPERATION_GUIDE } from '../data/sampleItems';
 import {
@@ -102,7 +103,16 @@ export const Step3Editor: React.FC<Step3Props> = ({
   const wordCount = countTranscriptWords(item.transcript);
   const estSec = estimateDurationSec(item.transcript, 1.0);
   const speakers = detectSpeakers(item.transcript);
-  const subjectStandards = getAchievementStandardsForSubject(params.subject);
+  const parsedItemSubject = item.gradeSubject.includes('/')
+    ? item.gradeSubject.split('/')[1].trim()
+    : '';
+  const activeItemSubject =
+    (parsedItemSubject && getSubjectInfo(parsedItemSubject)?.subject) ||
+    params.subject;
+  const subjectStandards = getAchievementStandardsForSubject(activeItemSubject);
+  const standardDomains = Array.from(
+    new Set(subjectStandards.map((s) => s.domain))
+  );
   const skillsPool = item.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
   const isRefining = refiningId === item.id;
 
@@ -555,19 +565,37 @@ export const Step3Editor: React.FC<Step3Props> = ({
                         value=""
                         onChange={(e) => {
                           if (e.target.value) {
-                            onUpdateItem(item.id, { achievementStandard: e.target.value });
+                            const matched = subjectStandards.find(
+                              (s) => s.text === e.target.value
+                            );
+                            onUpdateItem(item.id, {
+                              achievementStandard: e.target.value,
+                              ...(matched ? { directive: matched.directive } : {}),
+                            });
                           }
                         }}
                         className="w-full px-2 py-1 text-xs rounded border border-slate-200 bg-slate-50 text-slate-600"
                       >
                         <option value="">
-                          ▼ 교육과정 성취기준 목록에서 빠른 선택 (직접 수정도 가능)
+                          ▼ 2022 개정 「{activeItemSubject}」 성취기준 목록에서 빠른 선택 (직접 수정도 가능)
                         </option>
-                        {subjectStandards.map((s) => (
-                          <option key={s.code} value={s.text}>
-                            {s.text}
-                          </option>
-                        ))}
+                        {standardDomains.length > 1
+                          ? standardDomains.map((dom) => (
+                              <optgroup key={dom} label={`[${dom} 영역]`}>
+                                {subjectStandards
+                                  .filter((s) => s.domain === dom)
+                                  .map((s) => (
+                                    <option key={s.code} value={s.text}>
+                                      {s.text}
+                                    </option>
+                                  ))}
+                              </optgroup>
+                            ))
+                          : subjectStandards.map((s) => (
+                              <option key={s.code} value={s.text}>
+                                {s.text}
+                              </option>
+                            ))}
                       </select>
                       <input
                         type="text"

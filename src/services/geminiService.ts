@@ -14,6 +14,8 @@ import {
   VOCAB_LEVELS,
   getAchievementStandardsForSubject,
   getDefaultEnglishOptionSkills,
+  getListeningPrimaryStandardsForSubject,
+  getSubjectInfo,
 } from '../data/taxonomy';
 import { DEFAULT_OPERATION_GUIDE } from '../data/sampleItems';
 import { countTranscriptWords } from './wordUtils';
@@ -274,10 +276,38 @@ const ITEM_SCHEMA = {
   ],
 };
 
+function canonicalizeAchievementStandard(
+  rawStd: string,
+  subjectName: string,
+  fallbackText: string
+): string {
+  const trimmed = rawStd.trim();
+  const subjectStandards = getAchievementStandardsForSubject(subjectName);
+  if (!trimmed) {
+    return fallbackText || subjectStandards[0]?.text || '';
+  }
+  const exact = subjectStandards.find((s) => s.text === trimmed);
+  if (exact) return exact.text;
+
+  // 코드 부분 추출 후 하이픈 오기(예: [12영독-01-01] -> [12영독01-01])까지 정규화하여 교육과정 원문으로 보정
+  const codeMatch = trimmed.match(/^\[([^\]]+)\]/);
+  if (codeMatch) {
+    const rawCode = `[${codeMatch[1].trim()}]`;
+    const compactRaw = rawCode.replace(/-/g, '');
+    const byCode = subjectStandards.find(
+      (s) => s.code === rawCode || s.code.replace(/-/g, '') === compactRaw
+    );
+    if (byCode) return byCode.text;
+  }
+
+  return trimmed;
+}
+
 function normalizeGeneratedItem(
   raw: Record<string, unknown>,
   idx: number,
-  params: GenerationParams
+  params: GenerationParams,
+  plannedStandardText?: string
 ): ListeningItem {
   const vocabMeta =
     VOCAB_LEVELS.find((v) => v.id === params.vocabLevelId) || VOCAB_LEVELS[1];
@@ -342,10 +372,12 @@ function normalizeGeneratedItem(
       : params.mode === 'std'
       ? '학교 영어듣기능력평가(5지선다 객관식)'
       : '정기시험(선택형)',
-    achievementStandard: String(
-      raw.achievementStandard ||
+    achievementStandard: canonicalizeAchievementStandard(
+      String(raw.achievementStandard || ''),
+      params.subject,
+      plannedStandardText ||
         params.selectedStandards[0] ||
-        getAchievementStandardsForSubject(params.subject)[0]?.text ||
+        getListeningPrimaryStandardsForSubject(params.subject)[0]?.text ||
         ''
     ),
     directive: String(raw.directive || params.selectedDirective || '파악'),
@@ -396,14 +428,17 @@ interface ItemSlotSpec {
 function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
   const count = Math.max(1, params.itemCount);
   const allSubjectStandards = getAchievementStandardsForSubject(params.subject);
+  const primarySubjectStandards = getListeningPrimaryStandardsForSubject(
+    params.subject
+  );
   const activeStandards: AchievementStandardItem[] =
     params.selectedStandards.length > 0
       ? allSubjectStandards.filter((s) =>
           params.selectedStandards.includes(s.text)
         )
-      : allSubjectStandards;
+      : primarySubjectStandards;
   const fallbackStandards =
-    activeStandards.length > 0 ? activeStandards : allSubjectStandards;
+    activeStandards.length > 0 ? activeStandards : primarySubjectStandards;
 
   // 1) 문항 형식 슬롯 배열 구성
   const formatSlots: QuestionFormatType[] = [];
@@ -633,6 +668,7 @@ export async function generateListeningItems(
 ): Promise<ListeningItem[]> {
   const vocabMeta =
     VOCAB_LEVELS.find((v) => v.id === params.vocabLevelId) || VOCAB_LEVELS[1];
+  const subjectMeta = getSubjectInfo(params.subject);
 
   const slotPlan = buildItemSlotPlan(params);
 
@@ -705,9 +741,14 @@ export async function generateListeningItems(
    - 각 문항에 지정된 [담화·대화유형]을 엄격히 따르세요:
      * 대화문 / 인터뷰 / 토론·의견 교환: M과 W 두 화자가 자연스럽게 6~10턴 주고받는 구어체 대화로 작성합니다.
      * 담화문(안내 방송) / 담화문(음성 메시지) / 담화문(강연·발표): 단독 화자(W: 또는 M: 중 1명, 문항 간 성별 교차)의 완결된 담화문으로 작성합니다.
-2. 어휘 수 및 어휘 수준 엄수:
+2. 어휘 수 및 어휘 수준 엄수 (2022 개정 영어과 교육과정 [별표 3] 반영):
    - 각 문항 대본(transcript)의 영어 단어 수는 화자 기호(W:, M:)를 제외하고 목표 단어 수인 **약 ${params.targetWordCount}단어 (허용 범위: ${Math.max(45, Math.round(params.targetWordCount * 0.88))}~${Math.round(params.targetWordCount * 1.12)}단어)**를 정확히 맞추세요.
-   - 어휘 수준: ${vocabMeta.label} — ${vocabMeta.promptGuide}
+   - 어휘 수준: ${vocabMeta.label}${
+     subjectMeta
+       ? ` (현재 선택 과목 「${subjectMeta.subject}」 [별표 3] 권장 어휘 수: ${subjectMeta.vocabWords.toLocaleString()}단어 이내)`
+       : ''
+   } — ${vocabMeta.promptGuide}
+   - 성취기준 표기: 각 문항의 achievementStandard 필드는 반드시 설계표에 지정된 2022 개정 교육과정 성취기준 원문([코드] 문장)을 글자 하나 바꾸지 않고 그대로 기재하세요.
 3. 문항 형식별 필수 구성요소(자료집 표준 서식 준수):
    - gap_poster (안내문·포스터 빈칸 완성형):
      * stimulusTitle에 "[2026 ... Notice]" 등 제목 작성
@@ -805,7 +846,7 @@ ${params.extraInstructions.trim() ? `- 교사 추가 요청사항: ${params.extr
       directive: raw.directive || slot?.directive,
       materialType: raw.materialType || slot?.textType,
     };
-    return normalizeGeneratedItem(enrichedRaw, idx, params);
+    return normalizeGeneratedItem(enrichedRaw, idx, params, slot?.standardText);
   });
 }
 
@@ -882,7 +923,12 @@ ${instruction || '동일한 성취기준과 형식을 유지하되 새로운 상
     onStatus
   )) as Record<string, unknown>;
 
-  const normalized = normalizeGeneratedItem(raw, currentItem.itemNo - 1, params);
+  const normalized = normalizeGeneratedItem(
+    raw,
+    currentItem.itemNo - 1,
+    params,
+    currentItem.achievementStandard
+  );
   return {
     ...normalized,
     id: currentItem.id,

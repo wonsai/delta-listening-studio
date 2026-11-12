@@ -16,6 +16,7 @@ import {
 import { DAEGU_EDU_LOGO } from '../assets/daeguEduLogo';
 import {
   EVAL_PURPOSES,
+  getSubjectInfo,
   getSubjectsForSchoolAndGrade,
 } from '../data/taxonomy';
 
@@ -57,9 +58,9 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
       onChangeParams({
         schoolLevel: '중',
         grade: '2학년',
-        subject: '중학교 영어',
+        subject: '영어',
         vocabLevelId: 'mid_basic',
-        targetWordCount: 90,
+        targetWordCount: 95,
         selectedStandards: [],
         selectedSkills: [],
       });
@@ -87,19 +88,18 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
     if (params.schoolLevel === '고') {
       if (grade === '1학년') {
         nextSubj = currentStillValid ? params.subject : '공통영어1';
-        vocabLevelId = 'high1_common';
         targetWordCount = 120;
       } else if (grade === '2학년') {
         nextSubj = currentStillValid ? params.subject : '영어Ⅰ';
-        vocabLevelId = 'high2_general';
         targetWordCount = 140;
       } else {
         nextSubj = currentStillValid ? params.subject : '영어Ⅱ';
-        vocabLevelId = 'high3_advanced';
         targetWordCount = 155;
       }
+      vocabLevelId =
+        getSubjectInfo(nextSubj)?.recommendedVocabLevel || vocabLevelId;
     } else {
-      nextSubj = '중학교 영어';
+      nextSubj = '영어';
       vocabLevelId = 'mid_basic';
       targetWordCount = grade === '1학년' ? 75 : grade === '2학년' ? 95 : 110;
     }
@@ -113,10 +113,23 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
     });
   };
 
+  const handleSubjectChange = (nextSubject: string) => {
+    const subjMeta = getSubjectInfo(nextSubject);
+    onChangeParams({
+      subject: nextSubject,
+      vocabLevelId: subjMeta?.recommendedVocabLevel || params.vocabLevelId,
+      selectedStandards: [],
+    });
+  };
+
   const availableSubjects = getSubjectsForSchoolAndGrade(
     params.schoolLevel,
     params.grade
   );
+  const subjectCategories = Array.from(
+    new Set(availableSubjects.map((s) => s.category))
+  );
+  const selectedSubjectMeta = getSubjectInfo(params.subject);
 
   return (
     <div className="space-y-6">
@@ -298,30 +311,59 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-xs font-bold text-slate-700">
-                과목 선택
+                과목 선택 (2022 개정 교육과정)
               </label>
               <span className="text-[11px] font-semibold text-[#357DC7]">
                 {params.schoolLevel === '고'
                   ? params.grade === '1학년'
-                    ? '고1 공통과목 전용'
+                    ? `고1 공통과목 (${availableSubjects.length}종)`
                     : `${params.grade} 선택과목 (${availableSubjects.length}종)`
-                  : '중학교 교육과정'}
+                  : '중학교 공통 교육과정'}
               </span>
             </div>
             <select
-              value={params.subject}
-              onChange={(e) =>
-                onChangeParams({ subject: e.target.value, selectedStandards: [] })
+              value={
+                params.subject === '중학교 영어' ? '영어' : params.subject
               }
+              onChange={(e) => handleSubjectChange(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-[#357DC7]"
             >
-              {availableSubjects.map((s) => (
-                <option key={s.subject} value={s.subject}>
-                  {s.subject}
-                  {s.category ? ` (${s.category})` : ''}
-                </option>
-              ))}
+              {subjectCategories.length > 1
+                ? subjectCategories.map((cat) => (
+                    <optgroup key={cat} label={`[${cat}]`}>
+                      {availableSubjects
+                        .filter((s) => s.category === cat)
+                        .map((s) => (
+                          <option key={s.subject} value={s.subject}>
+                            {s.subject} ({s.category} · {s.vocabWords.toLocaleString()}단어 이내)
+                          </option>
+                        ))}
+                    </optgroup>
+                  ))
+                : availableSubjects.map((s) => (
+                    <option key={s.subject} value={s.subject}>
+                      {s.schoolLevel === '중'
+                        ? `${s.subject} (중학교 1~3학년 · ${s.vocabWords.toLocaleString()}단어 이내)`
+                        : `${s.subject} (${s.category}${
+                            s.curriculumNote ? ` · ${s.curriculumNote}` : ''
+                          } · ${s.vocabWords.toLocaleString()}단어 이내)`}
+                    </option>
+                  ))}
             </select>
+            {selectedSubjectMeta && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                <span className="px-1.5 py-0.5 rounded bg-[#EAF2FB] text-[#09396A] font-bold">
+                  {selectedSubjectMeta.category}
+                </span>
+                <span>
+                  코드 <b>[{selectedSubjectMeta.codePrefix}]</b> · [별표 3] 권장 어휘{' '}
+                  <b>{selectedSubjectMeta.vocabWords.toLocaleString()}단어 이내</b>
+                  {selectedSubjectMeta.curriculumNote
+                    ? ` (${selectedSubjectMeta.curriculumNote})`
+                    : ''}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

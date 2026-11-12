@@ -7,8 +7,8 @@ import {
 } from './types/assessment';
 import {
   VOCAB_LEVELS,
-  getAchievementStandardsForSubject,
   getDefaultEnglishOptionSkills,
+  getListeningPrimaryStandardsForSubject,
 } from './data/taxonomy';
 import { DEFAULT_OPERATION_GUIDE, SAMPLE_ITEMS } from './data/sampleItems';
 import {
@@ -241,7 +241,7 @@ export const App: React.FC = () => {
   const handleAddItem = () => {
     const vocabMeta =
       VOCAB_LEVELS.find((v) => v.id === params.vocabLevelId) || VOCAB_LEVELS[1];
-    const standards = getAchievementStandardsForSubject(params.subject);
+    const standards = getListeningPrimaryStandardsForSubject(params.subject);
     const isConstructed = params.mode === 'ib';
 
     const newItem: ListeningItem = {

@@ -37,6 +37,8 @@ import {
   VOCAB_LEVELS,
   getAchievementStandardsForSubject,
   getDefaultEnglishOptionSkills,
+  getListeningPrimaryStandardsForSubject,
+  getSubjectInfo,
 } from '../data/taxonomy';
 
 interface Step2Props {
@@ -134,8 +136,18 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   existingItemCount,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [stdDomainTab, setStdDomainTab] = useState<'first' | 'second' | 'all'>('first');
 
   const standards = getAchievementStandardsForSubject(params.subject);
+  const primaryStandards = getListeningPrimaryStandardsForSubject(params.subject);
+  const subjectMeta = getSubjectInfo(params.subject);
+  const availableDomains = Array.from(new Set(standards.map((s) => s.domain)));
+  const visibleStandards =
+    availableDomains.length <= 1 || stdDomainTab === 'all'
+      ? standards
+      : stdDomainTab === 'second' && availableDomains[1]
+      ? standards.filter((s) => s.domain === availableDomains[1])
+      : standards.filter((s) => s.domain === availableDomains[0]);
   const skillsList = params.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
   const activeDirectiveMeta = DIRECTIVES.find(
     (d) => d.value === params.selectedDirective
@@ -291,7 +303,7 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   const targetStandardsForPreview =
     params.selectedStandards.length > 0
       ? standards.filter((s) => params.selectedStandards.includes(s.text))
-      : standards;
+      : primaryStandards;
 
   const autoMatchedSkillPreview = Array.from(
     new Set(
@@ -335,6 +347,12 @@ export const Step2Parameters: React.FC<Step2Props> = ({
               <span className="font-bold text-slate-800">
                 {params.schoolLevel}등학교 {params.grade} ({params.subject})
               </span>
+              {subjectMeta && (
+                <span className="text-xs text-slate-500 ml-1.5">
+                  · 2022 개정 [{subjectMeta.category}] · 권장 어휘{' '}
+                  {subjectMeta.vocabWords.toLocaleString()}단어 이내
+                </span>
+              )}
             </p>
           </div>
           <button
@@ -1023,33 +1041,97 @@ export const Step2Parameters: React.FC<Step2Props> = ({
 
       {/* 3. 성취기준 · DELTA 수행지시어 · 평가 기능(자동 배정 포함) */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-        <div className="flex items-center gap-2">
-          <BookMarked className="w-5 h-5 text-[#09396A]" />
-          <h2 className="text-base font-extrabold text-slate-900">
-            3. 교육과정 성취기준 및 DELTA 수행지시어 · 평가 기능(문항 유형)
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <BookMarked className="w-5 h-5 text-[#09396A]" />
+            <h2 className="text-base font-extrabold text-slate-900">
+              3. 2022 개정 교육과정 성취기준 및 DELTA 수행지시어 · 평가 기능(문항 유형)
+            </h2>
+          </div>
+          <span className="text-[11px] font-bold text-[#09396A] bg-[#EAF2FB] px-2.5 py-0.5 rounded-full">
+            교육부 고시 제2022-33호 [별책 14] 원문 적용
+          </span>
         </div>
 
         {/* 성취기준 선택 */}
         <div>
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <label className="text-xs font-bold text-slate-700">
-              {params.subject} 이해(듣기) 영역 성취기준 선택
-            </label>
-            <button
-              type="button"
-              onClick={() => onChangeParams({ selectedStandards: [] })}
-              className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
-                params.selectedStandards.length === 0
-                  ? 'bg-[#09396A] text-white border-[#09396A]'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              ✨ 자동 배정 (과목 성취기준 골고루)
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-xs font-bold text-slate-700">
+                「{params.subject}」 과목 성취기준 선택
+              </label>
+              {availableDomains.length > 1 && (
+                <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setStdDomainTab('first')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition ${
+                      stdDomainTab === 'first'
+                        ? 'bg-white text-[#09396A] shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    (1) {availableDomains[0]} 영역 (
+                    {standards.filter((s) => s.domain === availableDomains[0]).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStdDomainTab('second')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition ${
+                      stdDomainTab === 'second'
+                        ? 'bg-white text-[#09396A] shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    (2) {availableDomains[1]} 영역 (
+                    {standards.filter((s) => s.domain === availableDomains[1]).length})
+                    {standards.some(
+                      (s) =>
+                        s.domain === availableDomains[1] &&
+                        params.selectedStandards.includes(s.text)
+                    ) && (
+                      <span className="ml-1 px-1 rounded bg-[#09396A] text-white text-[9px]">
+                        선택됨
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStdDomainTab('all')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition ${
+                      stdDomainTab === 'all'
+                        ? 'bg-white text-[#09396A] shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    전체 ({standards.length})
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {params.selectedStandards.length > 0 && (
+                <span className="text-[11px] font-bold text-[#357DC7]">
+                  직접 선택: {params.selectedStandards.length}개
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => onChangeParams({ selectedStandards: [] })}
+                className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                  params.selectedStandards.length === 0
+                    ? 'bg-[#09396A] text-white border-[#09396A]'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                ✨ 자동 배정 (듣기 적합 성취기준 골고루)
+              </button>
+            </div>
           </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {standards.map((std) => {
+            {visibleStandards.map((std) => {
               const checked = params.selectedStandards.includes(std.text);
               const recSkill =
                 params.mode === 'ib'
@@ -1082,6 +1164,9 @@ export const Step2Parameters: React.FC<Step2Props> = ({
                   <div className="flex-1">
                     <span>{std.text}</span>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <span className="inline-block px-1.5 py-0.2 rounded bg-[#09396A]/10 text-[10px] text-[#09396A] font-bold">
+                        {std.domain}
+                      </span>
                       <span className="inline-block px-1.5 py-0.2 rounded bg-slate-200/80 text-[10px] text-slate-700 font-semibold">
                         지시어: {std.directive}
                       </span>
