@@ -5,7 +5,11 @@ import {
   ListeningItem,
   TtsConfig,
 } from './types/assessment';
-import { VOCAB_LEVELS, getAchievementStandardsForSubject } from './data/taxonomy';
+import {
+  VOCAB_LEVELS,
+  getAchievementStandardsForSubject,
+  getDefaultEnglishOptionSkills,
+} from './data/taxonomy';
 import { DEFAULT_OPERATION_GUIDE, SAMPLE_ITEMS } from './data/sampleItems';
 import {
   generateListeningItems,
@@ -66,6 +70,9 @@ const INITIAL_PARAMS: GenerationParams = {
     short_kr: 1,
     mcq_5: 2,
   },
+  mcqOptionLanguage: 'auto',
+  mcqEnglishSkills: getDefaultEnglishOptionSkills(),
+  mcqPromptLanguage: 'ko',
   selectedStandards: [],
   selectedSkills: [],
   selectedDirective: '',

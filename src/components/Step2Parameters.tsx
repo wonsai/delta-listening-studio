@@ -20,6 +20,8 @@ import {
   DifficultyLevel,
   DistributionMode,
   GenerationParams,
+  McqOptionLanguageMode,
+  McqPromptLanguageMode,
   QuestionFormatType,
   VocabLevelId,
 } from '../types/assessment';
@@ -34,6 +36,7 @@ import {
   TOPICS,
   VOCAB_LEVELS,
   getAchievementStandardsForSubject,
+  getDefaultEnglishOptionSkills,
 } from '../data/taxonomy';
 
 interface Step2Props {
@@ -229,6 +232,59 @@ export const Step2Parameters: React.FC<Step2Props> = ({
     } else {
       onChangeParams({ textTypeMode: mode });
     }
+  };
+
+  // 객관식(5지선다) 포함 여부 및 기출 유형별 보기 언어 설정 헬퍼
+  const hasMcqSelected =
+    params.mode === 'std' ||
+    (params.questionFormatMode === 'counts'
+      ? Number(params.questionFormatCounts?.mcq_5 || 0) > 0 ||
+        (formatRemaining > 0 && params.questionFormats.includes('mcq_5'))
+      : params.questionFormats.includes('mcq_5'));
+
+  const mcqOptionLanguage: McqOptionLanguageMode =
+    params.mcqOptionLanguage || 'auto';
+  const mcqPromptLanguage: McqPromptLanguageMode =
+    params.mcqPromptLanguage || 'ko';
+  const activeEnglishSkillSet = new Set(
+    params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
+  );
+  const currentModeDefaultEnSkills = getDefaultEnglishOptionSkills(params.mode);
+  const currentModeEnSkills = skillsList.filter((s) =>
+    activeEnglishSkillSet.has(s.value)
+  );
+  const currentModeKoSkills = skillsList.filter(
+    (s) => !activeEnglishSkillSet.has(s.value)
+  );
+  const isAutoMappingCustomized =
+    currentModeEnSkills.length !== currentModeDefaultEnSkills.length ||
+    currentModeEnSkills.some(
+      (s) => !currentModeDefaultEnSkills.includes(s.value)
+    );
+
+  const isSkillEnglishOption = (skillValue: string): boolean => {
+    if (mcqOptionLanguage === 'en') return true;
+    if (mcqOptionLanguage === 'ko') return false;
+    return activeEnglishSkillSet.has(skillValue);
+  };
+
+  const handleToggleSkillEnglishOption = (skillValue: string) => {
+    const currentList =
+      params.mcqEnglishSkills || getDefaultEnglishOptionSkills();
+    const nextList = currentList.includes(skillValue)
+      ? currentList.filter((v) => v !== skillValue)
+      : [...currentList, skillValue];
+    onChangeParams({ mcqEnglishSkills: nextList });
+  };
+
+  const handleResetModeOptionDefaults = () => {
+    const currentModeNames = new Set(skillsList.map((s) => s.value));
+    const otherModeKept = (
+      params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
+    ).filter((v) => !currentModeNames.has(v));
+    onChangeParams({
+      mcqEnglishSkills: [...otherModeKept, ...currentModeDefaultEnSkills],
+    });
   };
 
   // 성취기준 기반 자동 매칭 평가기능 미리보기 목록
@@ -543,6 +599,281 @@ export const Step2Parameters: React.FC<Step2Props> = ({
             )}
           </div>
         </div>
+
+        {/* 객관식 보기(①~⑤) 및 발문 언어 설정 패널 */}
+        {hasMcqSelected ? (
+          <div className="pt-4 border-t border-slate-200/90 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-extrabold bg-[#09396A] text-white">
+                  객관식 보기 설정
+                </span>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  5지선다 선택지(①~⑤) 및 발문 언어 옵션
+                </h3>
+              </div>
+              <span className="text-[11px] font-semibold text-slate-500">
+                기출문제 전수 분석 기반 유형별 영어·한국어 보기 기본값 적용됨
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* 보기(선택지) 언어 모드 선택 */}
+              <div className="lg:col-span-8 space-y-2">
+                <label className="block text-xs font-bold text-slate-700">
+                  ①~⑤ 보기(선택지) 언어 설정
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {(
+                    [
+                      {
+                        id: 'auto' as McqOptionLanguageMode,
+                        badge: '추천 · 기본',
+                        title: '✨ 기출 유형별 자동',
+                        desc:
+                          params.mode === 'std'
+                            ? '응답·상황·심정·숫자·도표는 영어(숫자·기호) 보기, 목적·의견·이유 등은 한국어 보기'
+                            : '응답·심정·함축의미·구조·요약·비판분석 등은 영어 보기, 요지·이유 등은 한국어 보기',
+                      },
+                      {
+                        id: 'en' as McqOptionLanguageMode,
+                        badge: 'EN 통일',
+                        title: '🅰️ 전체 영어 보기',
+                        desc: '모든 객관식 문항의 ①~⑤ 선택지를 영어로 출제 (고교 내신 변별력·IB 스타일)',
+                      },
+                      {
+                        id: 'ko' as McqOptionLanguageMode,
+                        badge: 'KO 통일',
+                        title: '가 전체 한국어 보기',
+                        desc: '모든 객관식 문항의 ①~⑤ 선택지를 자연스러운 한국어로 통일 출제',
+                      },
+                    ] as const
+                  ).map((opt) => {
+                    const active = mcqOptionLanguage === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() =>
+                          onChangeParams({ mcqOptionLanguage: opt.id })
+                        }
+                        className={`text-left p-3 rounded-xl border transition flex flex-col justify-between ${
+                          active
+                            ? 'bg-[#F4F8FD] border-[#09396A] ring-1 ring-[#09396A]'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="text-xs font-extrabold text-slate-900">
+                              {opt.title}
+                            </span>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
+                                active
+                                  ? 'bg-[#09396A] text-white'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {opt.badge}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+                            {opt.desc}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 객관식 발문(질문) 언어 선택 */}
+              <div className="lg:col-span-4 space-y-2">
+                <label className="block text-xs font-bold text-slate-700">
+                  객관식 발문(질문) 언어 설정
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {(
+                    [
+                      {
+                        id: 'ko' as McqPromptLanguageMode,
+                        title: '한국어 발문 (기출·정기고사 표준)',
+                        desc: '예: 대화를 듣고, 여자의 마지막 말에 대한 남자의 응답으로 가장 적절한 것을 고르시오.',
+                      },
+                      {
+                        id: 'en' as McqPromptLanguageMode,
+                        title: '영어 발문 (IB 원문 스타일)',
+                        desc: '예: What is the speaker mainly talking about?',
+                      },
+                    ] as const
+                  ).map((pm) => {
+                    const active = mcqPromptLanguage === pm.id;
+                    return (
+                      <button
+                        key={pm.id}
+                        type="button"
+                        onClick={() =>
+                          onChangeParams({ mcqPromptLanguage: pm.id })
+                        }
+                        className={`text-left px-3 py-2.5 rounded-xl border transition ${
+                          active
+                            ? 'bg-[#F4F8FD] border-[#09396A] ring-1 ring-[#09396A]'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold text-slate-900">
+                          {pm.title}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                          {pm.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* 기출 유형별 자동 모드일 때: 유형별 EN / KO 현황 표시 및 원클릭 개별 조정 */}
+            {mcqOptionLanguage === 'auto' && (
+              <div className="rounded-xl bg-slate-50/90 border border-slate-200 p-3.5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-slate-800">
+                    유형별 보기 언어 세부 매핑{' '}
+                    <span className="font-normal text-slate-500">
+                      (칩을 클릭하면 특정 유형만 영어 보기 ↔ 한국어 보기로 자유롭게 전환할 수 있습니다)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-[#09396A]">
+                      영어·숫자 보기 {currentModeEnSkills.length}개 · 한국어 보기{' '}
+                      {currentModeKoSkills.length}개
+                    </span>
+                    {isAutoMappingCustomized && (
+                      <button
+                        type="button"
+                        onClick={handleResetModeOptionDefaults}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold text-[#357DC7] bg-white border border-[#357DC7]/40 hover:bg-[#EAF2FB] transition"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        기출 기본값 복원
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* 영어 보기 그룹 */}
+                  <div className="bg-white rounded-xl border border-blue-200/90 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold text-[#09396A]">
+                        🅰️ 영어(또는 숫자·도표 기호) 보기로 출제되는 유형
+                      </span>
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                        클릭 시 한국어로 변경
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {currentModeEnSkills.length === 0 ? (
+                        <span className="text-[11px] text-slate-400">
+                          선택된 영어 보기 유형이 없습니다.
+                        </span>
+                      ) : (
+                        currentModeEnSkills.map((sk) => {
+                          const highlighted = params.selectedSkills.includes(
+                            sk.value
+                          );
+                          return (
+                            <button
+                              key={sk.value}
+                              type="button"
+                              title={`${sk.description}\n보기 형식: ${sk.optionStyleHintEn}`}
+                              onClick={() =>
+                                handleToggleSkillEnglishOption(sk.value)
+                              }
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${
+                                highlighted
+                                  ? 'bg-[#09396A] text-white border-[#09396A]'
+                                  : 'bg-[#EAF2FB] text-[#09396A] border-[#357DC7]/50 hover:bg-blue-100'
+                              }`}
+                            >
+                              <span
+                                className={`text-[9px] px-1 rounded font-extrabold ${
+                                  highlighted
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-[#09396A] text-white'
+                                }`}
+                              >
+                                EN
+                              </span>
+                              {sk.value}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 한국어 보기 그룹 */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold text-slate-700">
+                        가 한국어 보기로 출제되는 유형
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                        클릭 시 영어 보기로 변경
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {currentModeKoSkills.length === 0 ? (
+                        <span className="text-[11px] text-slate-400">
+                          모든 유형이 영어 보기로 설정되어 있습니다.
+                        </span>
+                      ) : (
+                        currentModeKoSkills.map((sk) => {
+                          const highlighted = params.selectedSkills.includes(
+                            sk.value
+                          );
+                          return (
+                            <button
+                              key={sk.value}
+                              type="button"
+                              title={`${sk.description}\n보기 형식: ${sk.optionStyleHintKo}`}
+                              onClick={() =>
+                                handleToggleSkillEnglishOption(sk.value)
+                              }
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
+                                highlighted
+                                  ? 'bg-slate-800 text-white border-slate-800 font-bold'
+                                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <span
+                                className={`text-[9px] px-1 rounded font-extrabold ${
+                                  highlighted
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-slate-200 text-slate-700'
+                                }`}
+                              >
+                                KO
+                              </span>
+                              {sk.value}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-500">
+            현재 서답형 문항 형식만 선택되어 있어 객관식(5지선다) 보기 언어 설정은 생략됩니다. 5지선다 선택형 추가 시 보기 언어 옵션이 활성화됩니다.
+          </div>
+        )}
       </div>
 
       {/* 2. 어휘 개수 · 어휘 수준 · 필수 어휘 · 난이도 */}
@@ -841,6 +1172,7 @@ export const Step2Parameters: React.FC<Step2Props> = ({
 
             {skillsList.map((sk) => {
               const active = params.selectedSkills.includes(sk.value);
+              const optIsEn = isSkillEnglishOption(sk.value);
               return (
                 <button
                   key={sk.value}
@@ -854,13 +1186,24 @@ export const Step2Parameters: React.FC<Step2Props> = ({
                       ),
                     })
                   }
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
                     active
                       ? 'bg-[#EAF2FB] text-[#09396A] border-[#357DC7] font-bold'
                       : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  {sk.value}
+                  <span>{sk.value}</span>
+                  {hasMcqSelected && (
+                    <span
+                      className={`text-[9px] px-1 py-0.2 rounded font-extrabold ${
+                        optIsEn
+                          ? 'bg-blue-100 text-[#09396A]'
+                          : 'bg-slate-200/80 text-slate-600'
+                      }`}
+                    >
+                      {optIsEn ? 'EN보기' : 'KO보기'}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1317,6 +1660,17 @@ export const Step2Parameters: React.FC<Step2Props> = ({
                 {params.textTypeMode === 'counts'
                   ? `유형별 수량 지정 (${textAllocated}/${params.itemCount})`
                   : '문항별 자동 균형 배정'}
+                {hasMcqSelected && (
+                  <>
+                    {' '}
+                    · 객관식 보기:{' '}
+                    {mcqOptionLanguage === 'en'
+                      ? '전체 영어 보기'
+                      : mcqOptionLanguage === 'ko'
+                      ? '전체 한국어 보기'
+                      : '기출 유형별 자동(EN/KO)'}
+                  </>
+                )}
               </div>
             </div>
           )}

@@ -13,6 +13,7 @@ import {
   TEXT_TYPES,
   VOCAB_LEVELS,
   getAchievementStandardsForSubject,
+  getDefaultEnglishOptionSkills,
 } from '../data/taxonomy';
 import { DEFAULT_OPERATION_GUIDE } from '../data/sampleItems';
 import { countTranscriptWords } from './wordUtils';
@@ -202,20 +203,20 @@ const ITEM_SCHEMA = {
     },
     questionPrompt: {
       type: 'STRING',
-      description: '학생에게 제시할 발문 ("문항:" 접두어 제외 본문만, 예: "다음 교내 안내 방송을 듣고, ... 쓰시오.")',
+      description: '학생에게 제시할 발문 ("문항:" 접두어 제외 본문만, 설계표에 지정된 발문 언어 한국어/영어 준수)',
     },
     stimulusTitle: {
       type: 'STRING',
-      description: '포스터/안내문/메모 상자 제목 (예: "[2026 Career Mentoring Day Notice]"). 선택형 등 상자가 불필요하면 빈 문자열 ""',
+      description: '포스터/안내문/메모/도표/요약문 상자 제목 (예: "[2026 Career Mentoring Day Notice]"). 상자가 불필요하면 빈 문자열 ""',
     },
     stimulusBody: {
       type: 'STRING',
-      description: '포스터 빈칸 내용(예: Place: Moved to the ( 1 )) 또는 서술형 답안 소문항 양식(예: (1) 남자의 의도:\\n(2) 이유:). 불필요하면 빈 문자열 ""',
+      description: '포스터 빈칸 내용, 서술형 소문항 양식, 또는 객관식 도표((A)~(E) 비교표)·요약문((A),(B) 빈칸 상자) 본문. 불필요하면 빈 문자열 ""',
     },
     options: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: '선택형(mcq_5)일 때 5개의 선택지 텍스트(번호 기호 ①~⑤ 제외). 서답형이면 빈 배열 []',
+      description: '선택형(mcq_5)일 때 5개의 선택지 텍스트(번호 기호 ①~⑤ 제외, 설계표에 지정된 영어/한국어 보기 언어 및 병렬 구조 엄수). 서답형이면 빈 배열 []',
     },
     isConstructedResponse: { type: 'BOOLEAN' },
     correctChoice: {
@@ -387,6 +388,9 @@ interface ItemSlotSpec {
   skill: string;
   directive: string;
   textType: string;
+  mcqOptionLang: 'en' | 'ko';
+  mcqOptionStyleHint: string;
+  mcqPromptLang: 'ko' | 'en';
 }
 
 function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
@@ -441,76 +445,11 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
   };
   formatSlots.sort((a, b) => formatPriority[a] - formatPriority[b]);
 
-  // 2) 담화·대화 유형 슬롯 배열 구성 (문항 수 연동)
-  const autoTextCycle = [
-    '대화문',
-    '담화문(안내 방송)',
-    '대화문',
-    '담화문(음성 메시지)',
-    '대화문',
-    '담화문(강연·발표)',
-    '인터뷰',
-    '토론·의견 교환',
-  ];
-
-  const textSlots: string[] = new Array(count).fill('');
-  if (params.textTypeMode === 'counts' && params.textTypeCounts) {
-    const remainingCounts: Record<string, number> = { ...params.textTypeCounts };
-
-    // 포스터 빈칸 완성형(gap_poster)이 있고 안내방송/강연이 지정되어 있다면 우선 매칭하여 자연스러움 극대화
-    for (let i = 0; i < count; i++) {
-      if (formatSlots[i] === 'gap_poster') {
-        if ((remainingCounts['담화문(안내 방송)'] || 0) > 0) {
-          textSlots[i] = '담화문(안내 방송)';
-          remainingCounts['담화문(안내 방송)']--;
-        } else if ((remainingCounts['담화문(강연·발표)'] || 0) > 0) {
-          textSlots[i] = '담화문(강연·발표)';
-          remainingCounts['담화문(강연·발표)']--;
-        }
-      }
-    }
-
-    const flatRest: string[] = [];
-    for (const tt of TEXT_TYPES) {
-      const c = Number(remainingCounts[tt.id] || 0);
-      for (let k = 0; k < c; k++) flatRest.push(tt.id);
-    }
-
-    let rIdx = 0;
-    let autoIdx = 0;
-    for (let i = 0; i < count; i++) {
-      if (!textSlots[i]) {
-        if (rIdx < flatRest.length) {
-          textSlots[i] = flatRest[rIdx++];
-        } else {
-          textSlots[i] = autoTextCycle[autoIdx++ % autoTextCycle.length];
-        }
-      }
-    }
-  } else {
-    // 자동 균형 배정: 문항 형식과 인덱스에 맞춰 대화문·담화문이 한쪽으로 쏠리지 않게 자동 배정
-    let autoIdx = 0;
-    for (let i = 0; i < count; i++) {
-      const fmt = formatSlots[i];
-      if (fmt === 'gap_poster') {
-        textSlots[i] = i % 2 === 0 ? '담화문(안내 방송)' : '담화문(강연·발표)';
-      } else if (fmt === 'short_kr' && i % 2 === 1) {
-        textSlots[i] = '담화문(음성 메시지)';
-      } else {
-        let candidate = autoTextCycle[autoIdx++ % autoTextCycle.length];
-        if (i > 0 && candidate === textSlots[i - 1] && count > 1) {
-          candidate = autoTextCycle[autoIdx++ % autoTextCycle.length];
-        }
-        textSlots[i] = candidate;
-      }
-    }
-  }
-
-  // 3) 성취기준 및 성취기준 맞춤 평가기능(skill) · 수행지시어 매칭
+  // 2) 성취기준 및 성취기준 맞춤 평가기능(skill) · 수행지시어 매칭
   const allModeSkills = params.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
   const usedAutoSkills = new Set<string>();
 
-  return Array.from({ length: count }, (_, i) => {
+  const preliminarySlots = Array.from({ length: count }, (_, i) => {
     const stdItem = fallbackStandards[i % fallbackStandards.length];
     const standardText =
       stdItem?.text ||
@@ -549,12 +488,140 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
       '파악';
 
     return {
-      itemNo: i + 1,
       format: formatSlots[i],
       standardText,
       skill,
+      matchedSkillMeta,
       directive,
+    };
+  });
+
+  // 3) 담화·대화 유형 슬롯 배열 구성 (문항 수 및 문항 유형 특성 연동)
+  const autoTextCycle = [
+    '대화문',
+    '담화문(안내 방송)',
+    '대화문',
+    '담화문(음성 메시지)',
+    '대화문',
+    '담화문(강연·발표)',
+    '인터뷰',
+    '토론·의견 교환',
+  ];
+
+  const dialogueRequiredSkills = new Set([
+    '응답',
+    '듣고 응답하기',
+    '관계',
+    '할일',
+    '도표',
+    '의견',
+  ]);
+  const monologuePreferredSkills = new Set([
+    '목적',
+    '복합(주제+언급안됨)',
+  ]);
+
+  const textSlots: string[] = new Array(count).fill('');
+  if (params.textTypeMode === 'counts' && params.textTypeCounts) {
+    const remainingCounts: Record<string, number> = { ...params.textTypeCounts };
+
+    // 포스터 빈칸 완성형(gap_poster)이 있고 안내방송/강연이 지정되어 있다면 우선 매칭하여 자연스러움 극대화
+    for (let i = 0; i < count; i++) {
+      if (formatSlots[i] === 'gap_poster') {
+        if ((remainingCounts['담화문(안내 방송)'] || 0) > 0) {
+          textSlots[i] = '담화문(안내 방송)';
+          remainingCounts['담화문(안내 방송)']--;
+        } else if ((remainingCounts['담화문(강연·발표)'] || 0) > 0) {
+          textSlots[i] = '담화문(강연·발표)';
+          remainingCounts['담화문(강연·발표)']--;
+        }
+      } else if (
+        dialogueRequiredSkills.has(preliminarySlots[i].skill) &&
+        (remainingCounts['대화문'] || 0) > 0
+      ) {
+        textSlots[i] = '대화문';
+        remainingCounts['대화문']--;
+      }
+    }
+
+    const flatRest: string[] = [];
+    for (const tt of TEXT_TYPES) {
+      const c = Number(remainingCounts[tt.id] || 0);
+      for (let k = 0; k < c; k++) flatRest.push(tt.id);
+    }
+
+    let rIdx = 0;
+    let autoIdx = 0;
+    for (let i = 0; i < count; i++) {
+      if (!textSlots[i]) {
+        if (rIdx < flatRest.length) {
+          textSlots[i] = flatRest[rIdx++];
+        } else {
+          textSlots[i] = autoTextCycle[autoIdx++ % autoTextCycle.length];
+        }
+      }
+    }
+  } else {
+    // 자동 균형 배정: 문항 형식·평가 기능 특성과 인덱스에 맞춰 대화문·담화문이 어색하지 않게 배정
+    let autoIdx = 0;
+    for (let i = 0; i < count; i++) {
+      const fmt = formatSlots[i];
+      const sk = preliminarySlots[i].skill;
+      if (sk === '상황') {
+        textSlots[i] = '담화문(상황 설명)';
+      } else if (dialogueRequiredSkills.has(sk)) {
+        textSlots[i] = '대화문';
+      } else if (fmt === 'gap_poster' || monologuePreferredSkills.has(sk)) {
+        textSlots[i] = i % 2 === 0 ? '담화문(안내 방송)' : '담화문(강연·발표)';
+      } else if (fmt === 'short_kr' && i % 2 === 1) {
+        textSlots[i] = '담화문(음성 메시지)';
+      } else {
+        let candidate = autoTextCycle[autoIdx++ % autoTextCycle.length];
+        if (i > 0 && candidate === textSlots[i - 1] && count > 1) {
+          candidate = autoTextCycle[autoIdx++ % autoTextCycle.length];
+        }
+        textSlots[i] = candidate;
+      }
+    }
+  }
+
+  // 4) 객관식 보기(①~⑤) 언어 및 발문 언어 결정 (기출 유형별 매핑 반영)
+  const optionMode = params.mcqOptionLanguage || 'auto';
+  const promptMode = params.mcqPromptLanguage || 'ko';
+  const englishSkillSet = new Set(
+    params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
+  );
+
+  return preliminarySlots.map((p, i) => {
+    const mcqOptionLang: 'en' | 'ko' =
+      optionMode === 'en'
+        ? 'en'
+        : optionMode === 'ko'
+        ? 'ko'
+        : p.matchedSkillMeta
+        ? englishSkillSet.has(p.matchedSkillMeta.value)
+          ? 'en'
+          : 'ko'
+        : 'ko';
+
+    const mcqOptionStyleHint = p.matchedSkillMeta
+      ? mcqOptionLang === 'en'
+        ? p.matchedSkillMeta.optionStyleHintEn
+        : p.matchedSkillMeta.optionStyleHintKo
+      : mcqOptionLang === 'en'
+      ? '문법 구조와 길이가 균일한 자연스러운 영어(English) 선택지 5개'
+      : '어미와 수준이 균일한 자연스러운 한국어 선택지 5개';
+
+    return {
+      itemNo: i + 1,
+      format: p.format,
+      standardText: p.standardText,
+      skill: p.skill,
+      directive: p.directive,
       textType: textSlots[i],
+      mcqOptionLang,
+      mcqOptionStyleHint,
+      mcqPromptLang: promptMode,
     };
   });
 }
@@ -584,13 +651,44 @@ export async function generateListeningItems(
         slot.format;
       const ttLabel =
         TEXT_TYPES.find((t) => t.id === slot.textType)?.label || slot.textType;
+      const mcqSpec =
+        slot.format === 'mcq_5'
+          ? ` | 발문언어=[${
+              slot.mcqPromptLang === 'en' ? '영어(English) 발문' : '한국어 발문'
+            }] | 보기(①~⑤)언어=[${
+              slot.mcqOptionLang === 'en'
+                ? '반드시 영어(English·숫자·기호) 보기'
+                : '반드시 한국어 보기'
+            } — 형식: ${slot.mcqOptionStyleHint}]`
+          : '';
       return `  * ${slot.itemNo}번 문항: 문항형식=[${slot.format} (${fmtLabel})] | 담화·대화유형=[${ttLabel}] | 성취기준=[${slot.standardText}] | 평가기능=${
         params.selectedSkills.length === 0
           ? `[성취기준 맞춤 자동선택 — 추천: ${slot.skill}]`
           : `[${slot.skill}]`
-      } | 수행지시어=[${slot.directive}]`;
+      } | 수행지시어=[${slot.directive}]${mcqSpec}`;
     })
     .join('\n');
+
+  const allModeSkills = params.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
+  const activeEnSkillSet = new Set(
+    params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
+  );
+  const modeEnSkillNames = allModeSkills
+    .filter((s) => activeEnSkillSet.has(s.value))
+    .map((s) => s.value);
+  const modeKoSkillNames = allModeSkills
+    .filter((s) => !activeEnSkillSet.has(s.value))
+    .map((s) => s.value);
+  const mcqOptionPolicySummary =
+    (params.mcqOptionLanguage || 'auto') === 'en'
+      ? '모든 객관식(mcq_5) 문항의 ①~⑤ 선택지를 반드시 영어(English)로 통일하여 작성 (선택지에 한글 혼용 금지)'
+      : (params.mcqOptionLanguage || 'auto') === 'ko'
+      ? '모든 객관식(mcq_5) 문항의 ①~⑤ 선택지를 반드시 한국어로 통일하여 작성'
+      : `기출 유형별 자동 적용 — 영어(숫자·기호) 보기 유형[${
+          modeEnSkillNames.join(', ') || '없음'
+        }]은 반드시 영어(또는 숫자·도표 기호) 선택지 5개로 작성하고, 한국어 보기 유형[${
+          modeKoSkillNames.join(', ') || '없음'
+        }]은 반드시 한국어 선택지 5개로 작성`;
 
   const directiveGuide = params.selectedDirective
     ? `반드시 지정된 수행지시어 「${params.selectedDirective}」(${
@@ -623,7 +721,15 @@ export async function generateListeningItems(
    - short_en (영어 단답·요약형) / tf_justify (T/F 판별 및 근거 서술형):
      * stimulusBody에 요약문 틀 또는 T/F 진술문과 근거 작성란 제시 + 다단계 채점 기준표 작성
    - mcq_5 (5지선다 선택형):
-     * options 배열에 매력적이고 수준이 균일한 우리말(또는 응답 유형일 경우 영어) 선택지 5개를 정확히 작성 (앞에 ①~⑤ 기호는 붙이지 마세요)
+     * 각 문항의 설계표에 명시된 [발문언어]와 [보기(①~⑤)언어] 및 유형별 형식을 100% 엄수하여 options 배열에 5개의 선택지를 작성하세요 (앞에 ①~⑤ 기호는 붙이지 마세요).
+     * [반드시 영어(English·숫자·기호) 보기]로 지정된 문항은 options 배열의 5개 선택지를 반드시 영어(숫자 유형은 금액·시각 표기, 도표 유형은 "(A)"~"(E)")로만 작성하며, 선택지 안에 한글 설명을 절대 섞지 마세요.
+     * [반드시 한국어 보기]로 지정된 문항은 options 배열의 5개 선택지를 어미와 문장 구조가 균일한 자연스러운 한국어로 작성하세요.
+     * 유형별 필수 대본·문항지 구조 규칙:
+       - 「응답」 / 「듣고 응답하기」: 대본(transcript)은 두 화자(M, W)의 대화 중 응답 직전 상대방의 마지막 발화에서 끝나야 하며(정답 응답을 대본에 미리 포함하지 말 것), options에 이어질 자연스러운 응답 5개를 제시하세요.
+       - 「상황」: 단독 화자(W: 또는 M:)가 두 인물의 상황을 영어로 설명하고 마지막 문장을 반드시 "In this situation, what would [인물 A] most likely say to [인물 B]?"로 끝맺은 뒤, options에 인물 A의 발화 5개를 제시하세요.
+       - 「도표」: stimulusTitle과 stimulusBody에 (A)~(E) 5개 후보 항목과 4개 조건 열을 갖춘 영문 표를 작성하고, options는 ["(A)", "(B)", "(C)", "(D)", "(E)"]로 구성하세요.
+       - 「핵심 내용 요약」(영어 보기 객관식): stimulusTitle·stimulusBody에 (A), (B) 빈칸이 있는 1~2문장 영어 요약문을 제시하고 options는 "(A) 단어 — (B) 단어" 쌍 5개로 구성하세요.
+     * 정기고사 선지 배열 원칙: 5개 선택지는 문법적 병렬 구조를 유지하고, 선택지 길이에 따라 짧은 것에서 긴 순서로 배열하되 숫자·시각·도표 등 논리적 순서가 있는 경우 오름차순으로 배열하세요.
      * 정답이 대본의 특정 문장 하나만 들으면 너무 쉽게 풀리지 않도록 맥락적 단서와 패러프레이징을 활용하고, 오답 매력도를 높이세요.
 4. 무결성 검증:
    - 발문(questionPrompt), 대본(transcript), 선택지(options)/모범답안(modelAnswer), 정답 번호(correctChoice), 해설(explanation) 간에 단 하나의 논리적 모순도 없어야 합니다!`;
@@ -641,6 +747,11 @@ export async function generateListeningItems(
 ${formatDescriptions}
 - [필수 준수] 1번~${params.itemCount}번 문항별 배정 설계표:
 ${slotBlueprintLines}
+- 객관식(5지선다) 보기 및 발문 언어 원칙: ${mcqOptionPolicySummary} / 발문 언어: ${
+    (params.mcqPromptLanguage || 'ko') === 'en'
+      ? '영어(English) 발문'
+      : '한국어 발문 (기출·정기고사 표준)'
+  }
 - 평가 기능(문항 유형) 배정 원칙: ${
     params.selectedSkills.length === 0
       ? '교사가 [성취기준 맞춤 자동 배정]을 선택했습니다. 각 문항에 배정된 성취기준을 가장 타당하게 평가할 수 있는 평가 기능(skill)을 설계표의 추천 유형을 참고하여 정확히 선택해 출제하세요.'
@@ -705,9 +816,28 @@ export async function refineSingleItem(
   params: GenerationParams,
   onStatus?: (msg: string) => void
 ): Promise<ListeningItem> {
+  const allSkills = [...IB_SKILLS, ...STD_SKILLS];
+  const matchedSkill = allSkills.find((s) => s.value === currentItem.skill);
+  const englishSkillSet = new Set(
+    params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
+  );
+  const defaultMcqOptLang: 'en' | 'ko' =
+    (params.mcqOptionLanguage || 'auto') === 'en'
+      ? 'en'
+      : (params.mcqOptionLanguage || 'auto') === 'ko'
+      ? 'ko'
+      : matchedSkill
+      ? englishSkillSet.has(matchedSkill.value)
+        ? 'en'
+        : 'ko'
+      : 'ko';
+
   const systemInstruction = `당신은 대구광역시교육청 중등 영어듣기 출제 전문 AI 보조교사입니다.
 교사가 현재 편집 중인 문항 데이터(JSON)를 바탕으로 교사의 수정 요청사항을 정확히 반영하여 개선된 단일 문항 JSON을 반환하세요.
-대본(transcript) 수정 시 반드시 화자 표기(W:, M:)를 유지하고, 발문·모범답안·선택지·채점기준·해설·우리말 해석이 수정된 대본과 완벽히 일치하도록 함께 업데이트하세요.`;
+대본(transcript) 수정 시 반드시 화자 표기(W:, M:)를 유지하고, 발문·모범답안·선택지·채점기준·해설·우리말 해석이 수정된 대본과 완벽히 일치하도록 함께 업데이트하세요.
+5지선다 선택형(mcq_5)의 경우 교사가 별도로 언어를 지정하지 않았다면 현재 선택지 언어(또는 유형 기본값: ${
+    defaultMcqOptLang === 'en' ? '영어 보기' : '한국어 보기'
+  })와 병렬 구조, 길이순(또는 논리적 오름차순) 배열 원칙을 유지하세요.`;
 
   const userPrompt = `[현재 문항 데이터]
 ${JSON.stringify(

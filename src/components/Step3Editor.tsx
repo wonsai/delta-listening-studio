@@ -333,8 +333,16 @@ export const Step3Editor: React.FC<Step3Props> = ({
                 {[
                   '어휘를 조금 더 쉽게 낮춰줘',
                   '대본 분량을 약 110단어로 조절해줘',
-                  '포스터 빈칸 완성형 서답형으로 변환해줘',
-                  '5지선다 객관식 문항으로 변환해줘',
+                  ...(!item.isConstructedResponse
+                    ? [
+                        '선택지(①~⑤)를 기출 스타일 영어 보기로 변환해줘',
+                        '선택지(①~⑤)를 자연스러운 한국어 보기로 변환해줘',
+                        '포스터 빈칸 완성형 서답형으로 변환해줘',
+                      ]
+                    : [
+                        '5지선다 객관식(영어 보기)으로 변환해줘',
+                        '5지선다 객관식(한국어 보기)으로 변환해줘',
+                      ]),
                   '다른 소재의 새 대화로 재출제해줘',
                 ].map((chip) => (
                   <button
@@ -870,9 +878,39 @@ export const Step3Editor: React.FC<Step3Props> = ({
                       {/* 5지선다 선택지 편집 (선택형일 때 표시) */}
                       {!item.isConstructedResponse && (
                         <div className="space-y-2 pt-2">
-                          <label className="block text-xs font-bold text-slate-700">
-                            5지선다 선택지 및 정답 지정 (라디오 버튼 클릭으로 정답 선택)
-                          </label>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <label className="block text-xs font-bold text-slate-700">
+                              5지선다 선택지 및 정답 지정 (라디오 버튼 클릭으로 정답 선택)
+                            </label>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={isRefining}
+                                onClick={() =>
+                                  triggerQuickRefine(
+                                    '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, ①~⑤ 선택지(options) 5개를 해당 문항 유형의 기출 표준 병렬 구조와 길이순 배열 원칙에 맞는 자연스러운 영어(English) 보기로 변환해 주세요.'
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#EAF2FB] text-[#09396A] border border-[#357DC7]/40 hover:bg-blue-100 transition disabled:opacity-50"
+                              >
+                                <Sparkles className="w-3 h-3 text-[#357DC7]" />
+                                🅰️ 보기를 영어로 변환
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isRefining}
+                                onClick={() =>
+                                  triggerQuickRefine(
+                                    '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, ①~⑤ 선택지(options) 5개를 어미와 문장 구조가 균일한 자연스러운 한국어 보기로 변환해 주세요.'
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 transition disabled:opacity-50"
+                              >
+                                <Sparkles className="w-3 h-3 text-slate-500" />
+                                가 보기를 한국어로 변환
+                              </button>
+                            </div>
+                          </div>
                           {[0, 1, 2, 3, 4].map((oIdx) => {
                             const choiceNum = oIdx + 1;
                             const isCorrect = item.correctChoice === choiceNum;

@@ -3,6 +3,8 @@ export type IbStructureMode = 'single' | 'multi'; // 1지문 1문항(PDF 모델 
 export type SchoolLevel = '고' | '중';
 export type DifficultyLevel = '하' | '중' | '상';
 export type DistributionMode = 'auto' | 'counts';
+export type McqOptionLanguageMode = 'auto' | 'en' | 'ko';
+export type McqPromptLanguageMode = 'ko' | 'en';
 
 export type QuestionFormatType =
   | 'gap_poster'   // 서답형: 안내문·포스터·메모 빈칸 완성형 (PDF 예시 1)
@@ -120,6 +122,9 @@ export interface GenerationParams {
   questionFormatMode: DistributionMode; // 'auto'(허용 형식 균형 배분) | 'counts'(문항 수별 직접 지정)
   questionFormats: QuestionFormatType[]; // 대구형에서 허용할 문항 형식들 (auto 모드용)
   questionFormatCounts: Partial<Record<QuestionFormatType, number>>; // 문항 형식별 출제 개수 (counts 모드용)
+  mcqOptionLanguage: McqOptionLanguageMode; // 'auto'(기출 유형별 자동 · 기본) | 'en'(전체 영어 보기) | 'ko'(전체 한국어 보기)
+  mcqEnglishSkills: string[];    // 'auto' 모드에서 영어(또는 숫자·영문기호) 보기로 출제할 문항 유형(skill) 목록
+  mcqPromptLanguage: McqPromptLanguageMode; // 'ko'(한국어 발문 · 기본) | 'en'(영어 발문 · IB 원문형)
   selectedStandards: string[];   // 선택된 성취기준 코드/문구 목록 (빈 배열이면 과목 성취기준 자동 배정)
   selectedSkills: string[];      // 선택된 문항 유형(skill) 목록 (빈 배열이면 성취기준 맞춤 자동 배정)
   selectedDirective: string;     // 지정 수행지시어 (빈 문자열이면 성취기준/유형에 맞춰 자동 배정)
