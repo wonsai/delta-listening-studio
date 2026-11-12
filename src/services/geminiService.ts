@@ -289,7 +289,7 @@ function canonicalizeAchievementStandard(
   const exact = subjectStandards.find((s) => s.text === trimmed);
   if (exact) return exact.text;
 
-  // 코드 부분 추출 후 하이픈 오기(예: [12영독-01-01] -> [12영독01-01])까지 정규화하여 교육과정 원문으로 보정
+  // 코드 부분 추출 후 하이픈 오기(예: [12직영-01-01] -> [12직영01-01])까지 정규화하여 교육과정 원문으로 보정
   const codeMatch = trimmed.match(/^\[([^\]]+)\]/);
   if (codeMatch) {
     const rawCode = `[${codeMatch[1].trim()}]`;

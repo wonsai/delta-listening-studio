@@ -311,7 +311,7 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-xs font-bold text-slate-700">
-                과목 선택 (2022 개정 교육과정)
+                과목 선택 (2022 개정 · 듣기 성취기준 과목)
               </label>
               <span className="text-[11px] font-semibold text-[#357DC7]">
                 {params.schoolLevel === '고'
