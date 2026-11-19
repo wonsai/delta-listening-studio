@@ -15,11 +15,13 @@ import {
 } from './data/taxonomy';
 import { DEFAULT_OPERATION_GUIDE, SAMPLE_ITEMS } from './data/sampleItems';
 import {
+  auditAndFixListeningItem,
   generateListeningItems,
   getSavedApiKey,
   refineSingleItem,
   saveApiKey,
 } from './services/geminiService';
+import { validateListeningItem } from './services/itemValidator';
 import { sanitizeFilename, triggerBlobDownload } from './services/hwpxService';
 import { DAEGU_EDU_LOGO } from './assets/daeguEduLogo';
 import { Header } from './components/Header';
@@ -117,6 +119,8 @@ export const App: React.FC = () => {
   const [generating, setGenerating] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [refiningId, setRefiningId] = useState<string | null>(null);
+  const [auditingAll, setAuditingAll] = useState<boolean>(false);
+  const [auditProgressText, setAuditProgressText] = useState<string>('');
   const [toast, setToast] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
@@ -194,13 +198,29 @@ export const App: React.FC = () => {
         setStatusMessage(msg);
       });
       revokeItemAudioUrls(items);
-      setItems(renumberItems(generated));
+      const numbered = renumberItems(generated);
+      setItems(numbered);
       setActiveIndex(0);
       setCurrentStep(3);
-      showNotice(
-        'success',
-        `총 ${generated.length}문항이 출제되었습니다! 표 안의 모든 항목을 클릭해 직접 다듬거나 4단계에서 음원·HWPX로 내보낼 수 있습니다.`
+
+      const reports = numbered.map((it) =>
+        validateListeningItem(it, params.targetWordCount)
       );
+      const totalErrors = reports.reduce((s, r) => s + r.errorCount, 0);
+      const totalWarnings = reports.reduce((s, r) => s + r.warningCount, 0);
+
+      if (totalErrors > 0 || totalWarnings > 0) {
+        showNotice(
+          'info',
+          `총 ${numbered.length}문항이 출제되었습니다! 자동 타당도 점검에서 오류 ${totalErrors}건 · 주의 ${totalWarnings}건이 감지되었습니다. 상단 [AI 원어민·타당도 자동 교정] 버튼으로 한 번에 정리할 수 있습니다.`,
+          8000
+        );
+      } else {
+        showNotice(
+          'success',
+          `총 ${numbered.length}문항이 출제되었으며, 듣기 타당도·구어체 자동 점검을 모두 통과했습니다! 바로 확인 후 음원·HWPX로 내보낼 수 있습니다.`
+        );
+      }
     } catch (err) {
       showNotice(
         'error',
@@ -434,6 +454,109 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleAuditItem = async (item: ListeningItem) => {
+    if (!apiKey.trim()) {
+      showNotice(
+        'error',
+        'AI 원어민·타당도 검수를 사용하려면 상단 [API 키 설정]에서 Gemini API 키를 입력해 주세요.'
+      );
+      return;
+    }
+
+    setRefiningId(item.id);
+    try {
+      const report = validateListeningItem(item, params.targetWordCount);
+      const fixed = await auditAndFixListeningItem(
+        apiKey,
+        item,
+        params,
+        report
+      );
+      if (item.audioUrl) {
+        URL.revokeObjectURL(item.audioUrl);
+      }
+      setItems((prev) =>
+        prev.map((it) => (it.id === item.id ? fixed : it))
+      );
+      const afterReport = validateListeningItem(fixed, params.targetWordCount);
+      showNotice(
+        'success',
+        afterReport.status === 'pass'
+          ? `${item.itemNo}번 문항의 원어민 구어체·듣기 타당도 검수 및 교정이 완료되었습니다! (자동 점검 통과)`
+          : `${item.itemNo}번 문항을 AI가 검수·교정했습니다. 남은 주의 항목(${afterReport.errorCount + afterReport.warningCount}건)을 확인해 주세요.`
+      );
+    } catch (err) {
+      showNotice(
+        'error',
+        err instanceof Error ? err.message : '문항 검수 중 오류가 발생했습니다.'
+      );
+    } finally {
+      setRefiningId(null);
+    }
+  };
+
+  const handleAuditAllItems = async (onlyFlagged = false) => {
+    if (!apiKey.trim()) {
+      showNotice(
+        'error',
+        'AI 일괄 검수를 사용하려면 상단 [API 키 설정]에서 Gemini API 키를 입력해 주세요.'
+      );
+      return;
+    }
+
+    const targets = onlyFlagged
+      ? items.filter(
+          (it) => validateListeningItem(it, params.targetWordCount).status !== 'pass'
+        )
+      : [...items];
+
+    if (targets.length === 0) {
+      showNotice('success', '현재 오류나 주의가 감지된 문항이 없습니다.');
+      return;
+    }
+
+    setAuditingAll(true);
+    let fixedCount = 0;
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i];
+        setRefiningId(target.id);
+        setAuditProgressText(
+          `${target.itemNo}번 문항 원어민 구어체·타당도 검수 중 (${i + 1}/${targets.length})...`
+        );
+        const report = validateListeningItem(target, params.targetWordCount);
+        const fixed = await auditAndFixListeningItem(
+          apiKey,
+          target,
+          params,
+          report
+        );
+        if (target.audioUrl) {
+          URL.revokeObjectURL(target.audioUrl);
+        }
+        setItems((prev) =>
+          prev.map((it) => (it.id === target.id ? fixed : it))
+        );
+        fixedCount++;
+      }
+      showNotice(
+        'success',
+        `총 ${fixedCount}개 문항의 원어민 구어체·듣기 타당도 일괄 검수 및 자동 교정을 완료했습니다!`
+      );
+    } catch (err) {
+      showNotice(
+        'error',
+        err instanceof Error
+          ? `${fixedCount}개 완료 후 오류 발생: ${err.message}`
+          : '일괄 검수 중 오류가 발생했습니다.'
+      );
+    } finally {
+      setRefiningId(null);
+      setAuditingAll(false);
+      setAuditProgressText('');
+    }
+  };
+
   const handleLoadSamples = () => {
     revokeItemAudioUrls(items);
     setParams(INITIAL_PARAMS);
@@ -577,7 +700,11 @@ export const App: React.FC = () => {
             onDeleteItem={handleDeleteItem}
             onMoveItem={handleMoveItem}
             onRefineItem={handleRefineItem}
+            onAuditItem={handleAuditItem}
+            onAuditAllItems={handleAuditAllItems}
             refiningId={refiningId}
+            auditingAll={auditingAll}
+            auditProgressText={auditProgressText}
             onBack={() => setCurrentStep(2)}
             onNext={() => setCurrentStep(4)}
           />

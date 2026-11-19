@@ -1,8 +1,10 @@
 import {
+  DifficultyLevel,
   GenerationParams,
   ListeningItem,
   QuestionFormatType,
   RubricRow,
+  VocabLevelId,
 } from '../types/assessment';
 import {
   AchievementStandardItem,
@@ -17,7 +19,16 @@ import {
   getListeningPrimaryStandardsForSubject,
   getSubjectInfo,
 } from '../data/taxonomy';
+import {
+  formatReferenceExamplesForPrompt,
+  selectReferenceExamples,
+} from '../data/pastItemsDb';
 import { DEFAULT_OPERATION_GUIDE } from '../data/sampleItems';
+import {
+  ItemValidationReport,
+  buildAutoFixPromptFromReport,
+  validateListeningItem,
+} from './itemValidator';
 import { countTranscriptWords } from './wordUtils';
 
 const STORAGE_KEY = 'delta_authoring_gemini_key';
@@ -76,7 +87,7 @@ async function callGeminiJson(
       responseMimeType: 'application/json',
       responseSchema,
       thinkingConfig: {
-        thinkingLevel: 'LOW',
+        thinkingLevel: 'MEDIUM',
       },
     },
   };
@@ -732,8 +743,45 @@ export async function generateListeningItems(
       })의 사고 과정이 드러나도록 설계하세요.`
     : `각 문항의 성취기준과 평가 기능에 부합하는 대구미래역량교육과정 10대 수행지시어(파악, 분석, 조직, 제시, 묘사, 설명, 요약, 상호작용, 추론, 활용)를 정확히 배정하세요.`;
 
-  const systemInstruction = `당신은 대한민국 대구광역시교육청 '중등 영어듣기 현장지원단' 및 'DELTA(대구형 영어듣기 교수·평가 플랫폼)' 수석 출제위원입니다.
+  const difficultyGuide = buildDifficultyListeningGuide(
+    params.difficulty,
+    params.vocabLevelId
+  );
+
+  const selectedRefs = selectReferenceExamples(
+    slotPlan.map((s) => ({
+      mode: params.mode,
+      schoolLevel: params.schoolLevel,
+      format: s.format,
+      skill: s.skill,
+      textType: s.textType,
+      difficulty: params.difficulty,
+      vocabLevelId: params.vocabLevelId,
+    })),
+    2
+  );
+  const referenceBlock = formatReferenceExamplesForPrompt(selectedRefs);
+
+  const systemInstruction = `당신은 대한민국 대구광역시교육청 '중등 영어듣기 현장지원단' 및 'DELTA(대구형 영어듣기 교수·평가 플랫폼)' 수석 출제위원이자, 원어민 영어듣기 대본 감수자입니다.
 교사가 설정한 평가 유형, 학년/과목, 성취기준, 수행지시어, 소재, 어휘 수준 및 목표 어휘 수에 맞추어 학교 정기고사 및 수행평가에 즉시 투입할 수 있는 최고 품질의 영어듣기 평가 문항 원안을 출제합니다.
+
+[절대 준수 원칙 A · 원어민 자연 구어체(Natural Spoken English) & 직역 금지]
+- 영어 대본(transcript)은 읽기 지문이 아니라, 실제 영어권 원어민이 일상·학교·방송에서 **소리 내어 말하는 구어체**로 작성합니다.
+- 한국어 교육과정 용어·기관명·추상 개념을 문어체 영어로 직역(Translationese)하지 마세요:
+  * ❌ meteorological center / agency (기상청 직역) → ✅ weather forecast / weather service / the news
+  * ❌ ecological transition (생태전환 직역) → ✅ going green / eco-friendly habits / protecting the environment
+  * ❌ democratic citizenship (민주시민 직역) → ✅ being a responsible citizen / following community rules
+  * ❌ inclement weather / precipitation → ✅ bad weather / heavy rain
+  * ❌ 일상 대화 속 문어체·라틴어계 저빈도 어휘(utilize, commence, relocate, rectify, alleviate, ameliorate, disseminate, refrain from, prior to, subsequently, furthermore, moreover, exacerbate, detrimental, ubiquitous 등) → ✅ 일상 구어(use, start, move, fix, reduce, improve, share, avoid, before, then, also, make worse, harmful, everywhere)
+- 대화문(대화문·인터뷰·토론)에서는 축약형(I'm, don't, we've, it's, won't)과 자연스러운 구어 반응(Really?, Sounds great!, Wait a minute, Actually, That makes sense 등)을 적극 사용하세요.
+- 난이도 조절은 '듣기에 지나치게 어려운 전문 용어'로 하지 말고, 맥락 추론·패러프레이징·오답 설계로 조절하세요.
+
+[절대 준수 원칙 B · 듣기 평가 전용(Audio-Only) 타당도 — 읽기 문형 금지]
+- 시험 현장에서 **학생에게는 영어 대본(transcript)이 절대 인쇄·제공되지 않습니다.** 학생은 오직 **음성만 1~2회 듣고** 문제를 풉니다.
+- 따라서 학생이 보게 되는 **발문(questionPrompt), 안내문/포스터(stimulusTitle·stimulusBody), 선택지(options)** 어디에도 읽기 평가 표현을 절대 쓰지 마세요:
+  * ❌ 절대 금지 표현: "대본을 보고", "대본에서 찾아 쓰시오", "대본의 내용을 참고하여", "지문을 보고/읽고", "지문에서 찾아", "윗글", "다음 글을 읽고", "본문에서", "밑줄 친", "그대로 옮겨 쓰시오", "Read the transcript/script/dialogue/passage", "Find in the script"
+  * ✅ 올바른 표현: "대화를 듣고, ...", "다음 안내 방송을 듣고, ...", "다음 음성 메시지를 듣고, ...", "들은 내용을 바탕으로 ...", "Listen to the dialogue/announcement and ..."
+- 서답형 문항(gap_poster, short_kr, short_en, tf_justify)은 학생이 귀로 듣고 노트테이킹·기억할 수 있는 핵심 정보(날짜, 장소, 행동, 의도, 이유 등)만 물어야 하며, 철자가 지나치게 까다로운 저빈도 고유명사나 긴 원문 문장 그대로 받아쓰기를 요구하지 마세요.
 
 [핵심 출제 원칙]
 1. 화자 표기 및 담화·대화 유형 엄수:
@@ -741,26 +789,27 @@ export async function generateListeningItems(
    - 각 문항에 지정된 [담화·대화유형]을 엄격히 따르세요:
      * 대화문 / 인터뷰 / 토론·의견 교환: M과 W 두 화자가 자연스럽게 6~10턴 주고받는 구어체 대화로 작성합니다.
      * 담화문(안내 방송) / 담화문(음성 메시지) / 담화문(강연·발표): 단독 화자(W: 또는 M: 중 1명, 문항 간 성별 교차)의 완결된 담화문으로 작성합니다.
-2. 어휘 수 및 어휘 수준 엄수 (2022 개정 영어과 교육과정 [별표 3] 반영):
+2. 어휘 수·어휘 수준 및 난이도 기준 엄수 (2022 개정 [별표 3] 반영):
    - 각 문항 대본(transcript)의 영어 단어 수는 화자 기호(W:, M:)를 제외하고 목표 단어 수인 **약 ${params.targetWordCount}단어 (허용 범위: ${Math.max(45, Math.round(params.targetWordCount * 0.88))}~${Math.round(params.targetWordCount * 1.12)}단어)**를 정확히 맞추세요.
    - 어휘 수준: ${vocabMeta.label}${
      subjectMeta
        ? ` (현재 선택 과목 「${subjectMeta.subject}」 [별표 3] 권장 어휘 수: ${subjectMeta.vocabWords.toLocaleString()}단어 이내)`
        : ''
    } — ${vocabMeta.promptGuide}
+   - 난이도 세부 지침(${params.difficulty}): ${difficultyGuide}
    - 성취기준 표기: 각 문항의 achievementStandard 필드는 반드시 설계표에 지정된 2022 개정 교육과정 성취기준 원문([코드] 문장)을 글자 하나 바꾸지 않고 그대로 기재하세요.
 3. 문항 형식별 필수 구성요소(자료집 표준 서식 준수):
    - gap_poster (안내문·포스터 빈칸 완성형):
      * stimulusTitle에 "[2026 ... Notice]" 등 제목 작성
-     * stimulusBody에 Date, Place, How to Sign Up 등 항목과 "(   1   )", "(   2   )", "(   3   )" 형태의 빈칸 2~3개 구성 (단순 받아쓰기가 아니라 대본의 정보 전환/재구성이 일어나도록 패러프레이징 활용)
+     * stimulusBody에 Date, Place, How to Sign Up 등 항목과 "(   1   )", "(   2   )", "(   3   )" 형태의 빈칸 2~3개 구성 (학생이 듣고 적을 수 있는 1~2단어 친숙한 영어 어구로 정답 설계, 패러프레이징 활용)
      * modelAnswer에 "(1) ...\\n(2) ...\\n(3) ..." 작성 및 관사·복수형 허용 범위 병기
-     * rubricRows에 3점/2점/1점/0점의 4단계 세부 채점 기준 작성 (핵심 의미 전달 중심, 경미한 철자 오류 허용 여부 명시)
+     * rubricRows에 3점/2점/1점/0점의 4단계 세부 채점 기준 작성 (핵심 의미 전달 중심, 경미한 철자 오류 허용 여부 명시, 최고 점수는 totalMarks와 일치)
    - short_kr (우리말 의도·이유·핵심 서술형):
      * stimulusBody에 "(1) 화자의 의도(요청 사항):\\n(2) 요청하게 된 이유:" 등 구체적 답안 작성 틀 제시
      * modelAnswer에 각 소항목별 명확한 우리말 모범답안 제시
-     * rubricRows에 4점/2점/1점/0점(또는 3점/2점/1점/0점) 다단계 부분점수 채점 기준표 작성
+     * rubricRows에 4점/2점/1점/0점(또는 3점/2점/1점/0점) 다단계 부분점수 채점 기준표 작성 (최고 점수는 totalMarks와 일치)
    - short_en (영어 단답·요약형) / tf_justify (T/F 판별 및 근거 서술형):
-     * stimulusBody에 요약문 틀 또는 T/F 진술문과 근거 작성란 제시 + 다단계 채점 기준표 작성
+     * stimulusBody에 요약문 틀 또는 T/F 진술문과 근거 작성란 제시 + 다단계 채점 기준표 작성 (들어서 파악 가능한 핵심 정보 중심)
    - mcq_5 (5지선다 선택형):
      * 각 문항의 설계표에 명시된 [발문언어]와 [보기(①~⑤)언어] 및 유형별 형식을 100% 엄수하여 options 배열에 5개의 선택지를 작성하세요 (앞에 ①~⑤ 기호는 붙이지 마세요).
      * [반드시 영어(English·숫자·기호) 보기]로 지정된 문항은 options 배열의 5개 선택지를 반드시 영어(숫자 유형은 금액·시각 표기, 도표 유형은 "(A)"~"(E)")로만 작성하며, 선택지 안에 한글 설명을 절대 섞지 마세요.
@@ -772,8 +821,10 @@ export async function generateListeningItems(
        - 「핵심 내용 요약」(영어 보기 객관식): stimulusTitle·stimulusBody에 (A), (B) 빈칸이 있는 1~2문장 영어 요약문을 제시하고 options는 "(A) 단어 — (B) 단어" 쌍 5개로 구성하세요.
      * 정기고사 선지 배열 원칙: 5개 선택지는 문법적 병렬 구조를 유지하고, 선택지 길이에 따라 짧은 것에서 긴 순서로 배열하되 숫자·시각·도표 등 논리적 순서가 있는 경우 오름차순으로 배열하세요.
      * 정답이 대본의 특정 문장 하나만 들으면 너무 쉽게 풀리지 않도록 맥락적 단서와 패러프레이징을 활용하고, 오답 매력도를 높이세요.
-4. 무결성 검증:
-   - 발문(questionPrompt), 대본(transcript), 선택지(options)/모범답안(modelAnswer), 정답 번호(correctChoice), 해설(explanation) 간에 단 하나의 논리적 모순도 없어야 합니다!`;
+4. 제출 전 자가 무결성 검증(반드시 내부적으로 점검 후 출력):
+   - 모든 문항의 발문·상자에 "대본/지문/윗글/읽고/찾아 쓰시오/transcript/passage"가 단 한 번도 들어가지 않았는가?
+   - 원어민이 소리 내어 읽었을 때 어색한 직역 용어나 난이도 대비 지나치게 어려운 문어체 단어가 없는가?
+   - 발문(questionPrompt), 대본(transcript), 선택지(options)/모범답안(modelAnswer), 정답 번호(correctChoice), 채점기준 최고점(rubricRows vs totalMarks), 해설(explanation) 간에 논리적 모순이 없는가?`;
 
   const userPrompt = `다음 출제 사양과 **문항별 배정 설계표**에 맞추어 서로 소재와 상황이 겹치지 않는 완성도 높은 영어듣기 문항 **총 ${params.itemCount}문항**을 출제해 주세요.
 
@@ -805,11 +856,11 @@ ${params.customTopicDetail ? `- 교사 지정 구체적 상황/주제: ${params.
 - 대본 목표 단어 수: 지문당 약 ${params.targetWordCount}단어
 - 어휘 수준: ${vocabMeta.label}
 ${params.requiredWords.trim() ? `- 반드시 대본에 자연스럽게 포함할 필수 어휘: ${params.requiredWords}` : ''}
-- 목표 난이도: ${params.difficulty}
+- 목표 난이도: ${params.difficulty} (${difficultyGuide})
 ${params.selectedExpressions.length ? `- 반영할 [별표 2] 의사소통 기능: ${params.selectedExpressions.join(', ')}` : ''}
 ${params.selectedStructures.length ? `- 반영할 [별표 4] 언어 형식(구문): ${params.selectedStructures.join(', ')}` : ''}
 ${params.extraInstructions.trim() ? `- 교사 추가 요청사항: ${params.extraInstructions}` : ''}
-
+${referenceBlock}
 반드시 JSON 스키마의 items 배열 안에 정확히 ${params.itemCount}개의 문항 객체를 순서대로 담아 반환하세요.`;
 
   const batchSchema = {
@@ -850,6 +901,27 @@ ${params.extraInstructions.trim() ? `- 교사 추가 요청사항: ${params.extr
   });
 }
 
+function buildDifficultyListeningGuide(
+  difficulty: DifficultyLevel,
+  vocabLevelId: VocabLevelId
+): string {
+  const isMid = vocabLevelId === 'mid_basic';
+  if (difficulty === '하') {
+    return isMid
+      ? '초빈출 일상 구어(CEFR A2)만 사용. 한 문장 평균 8~11단어(최대 15단어), 단순 시제·명확한 정보 제시, 방해 정보 최소화.'
+      : '학생이 1회 청취로 부담 없이 이해할 수 있는 일상 구어(CEFR A2+~B1 초입). 한 문장 평균 9~13단어(최대 17단어), 명확한 단서와 평이한 구문 위주.';
+  }
+  if (difficulty === '상') {
+    return isMid
+      ? '중학 기본 어휘 범위(CEFR A2+~B1 초입)를 유지하되, 조건 변경·화자 의도 추론·패러프레이징으로 사고력 난이도를 높이세요. 생소한 전문 용어로 어렵게 만들지 마세요.'
+      : '고등·수능 수준 구어체(CEFR B1+~B2). 한 문장 평균 13~18단어, 대화 맥락 추론·정보 전환(패러프레이징)·매력적인 오답으로 변별력을 확보하되, 부자연스러운 학술 직역어는 피하세요.';
+  }
+  // 기본 '중'
+  return isMid
+    ? '중학교 교과서·실생활 구어체(CEFR A2). 한 문장 평균 9~13단어(최대 18단어), 일상적 표현만 사용하고 문어체·전문어는 배제.'
+    : '표준 학교 정기고사 듣기 난이도(CEFR B1). 귀로 1회 듣고 즉각 이해할 수 있는 자연스러운 일상 구어 어휘만 사용하고, 한 문장 평균 11~15단어(최대 22단어)를 유지하세요. 저빈도 문어·전문어는 절대 사용하지 마세요.';
+}
+
 export async function refineSingleItem(
   apiKey: string,
   currentItem: ListeningItem,
@@ -872,11 +944,20 @@ export async function refineSingleItem(
         ? 'en'
         : 'ko'
       : 'ko';
+  const difficultyGuide = buildDifficultyListeningGuide(
+    currentItem.difficulty,
+    currentItem.vocabLevelId
+  );
 
-  const systemInstruction = `당신은 대구광역시교육청 중등 영어듣기 출제 전문 AI 보조교사입니다.
+  const systemInstruction = `당신은 대구광역시교육청 중등 영어듣기 출제 전문 AI 보조교사이자 원어민 구어체 감수자입니다.
 교사가 현재 편집 중인 문항 데이터(JSON)를 바탕으로 교사의 수정 요청사항을 정확히 반영하여 개선된 단일 문항 JSON을 반환하세요.
-대본(transcript) 수정 시 반드시 화자 표기(W:, M:)를 유지하고, 발문·모범답안·선택지·채점기준·해설·우리말 해석이 수정된 대본과 완벽히 일치하도록 함께 업데이트하세요.
-5지선다 선택형(mcq_5)의 경우 교사가 별도로 언어를 지정하지 않았다면 현재 선택지 언어(또는 유형 기본값: ${
+
+[필수 준수 원칙]
+1. 원어민 자연 구어체: 한국어 직역(예: meteorological center, ecological transition 등)과 일상 대화에 어색한 문어체/전문어(utilize, commence, relocate, rectify 등)를 피하고 원어민이 실제 말하는 쉬운 구어 표현으로 작성하세요.
+   - 현재 난이도 기준(${currentItem.difficulty} / ${currentItem.vocabLevelLabel}): ${difficultyGuide}
+2. 듣기 평가 전용(Audio-Only) 타당도: 학생에게는 대본이 제공되지 않습니다. 발문·상자·보기에 "대본을 보고", "대본에서 찾아", "지문에서", "윗글", "읽고", "transcript/passage" 같은 읽기 표현을 절대 사용하지 마세요.
+3. 일관성 유지: 대본(transcript) 수정 시 화자 표기(W:, M:)를 유지하고, 발문·모범답안·선택지·채점기준(최고점=totalMarks)·해설·우리말 해석이 수정된 대본과 완벽히 일치하도록 함께 업데이트하세요.
+4. 5지선다 선택형(mcq_5)의 경우 교사가 별도로 언어를 지정하지 않았다면 현재 선택지 언어(또는 유형 기본값: ${
     defaultMcqOptLang === 'en' ? '영어 보기' : '한국어 보기'
   })와 병렬 구조, 길이순(또는 논리적 오름차순) 배열 원칙을 유지하세요.`;
 
@@ -936,4 +1017,37 @@ ${instruction || '동일한 성취기준과 형식을 유지하되 새로운 상
     includeOperationGuide: currentItem.includeOperationGuide,
     operationGuide: currentItem.operationGuide,
   };
+}
+
+/**
+ * 2차 원어민 구어체·듣기 타당도 정밀 검수 및 자동 교정
+ * - 자동 검수기(itemValidator)가 찾은 문제점 + 원어민 시선에서의 어색한 표현·난이도 초과 어휘·정답 논리 오류를 한 번에 교정합니다.
+ */
+export async function auditAndFixListeningItem(
+  apiKey: string,
+  currentItem: ListeningItem,
+  params: GenerationParams,
+  existingReport?: ItemValidationReport,
+  onStatus?: (msg: string) => void
+): Promise<ListeningItem> {
+  const report =
+    existingReport || validateListeningItem(currentItem, params.targetWordCount);
+  const autoFixBrief = buildAutoFixPromptFromReport(
+    report,
+    currentItem.difficulty,
+    currentItem.vocabLevelLabel
+  );
+
+  const auditInstruction = `[원어민 구어체 · 듣기 타당도 정밀 검수 및 자동 교정]
+1. 아래 자동 검수 지적 사항을 빠짐없이 해결하세요:
+${autoFixBrief}
+
+2. 추가 정밀 검수 항목 (지적 사항이 없더라도 반드시 확인 후 개선):
+- 대본(transcript) 전체를 원어민이 소리 내어 말하는 시선으로 점검하고, 한국어 직역 표현(예: meteorological center → weather forecast, ecological transition → eco-friendly habits 등)이나 듣기에 부자연스러운 문어체·고난도 어휘를 현재 수준(${currentItem.vocabLevelLabel}, 난이도 ${currentItem.difficulty})에 맞는 일상 구어체로 다듬으세요.
+- 학생은 대본을 보지 않고 오직 음성만 듣는다는 전제로, 발문·안내문 상자·선택지에 읽기 문형 표현("대본을 보고/찾아", "지문에서", "윗글", "읽고" 등)이 단 하나도 없도록 교정하세요.
+- 대본의 정답 근거와 선택지(또는 모범답안·세부 채점기준·해설·우리말 해석)가 100% 논리적으로 일치하고 복수 정답 여지가 없도록 검증·보완하세요.
+- 기존 문항의 성취기준, 문항 형식(${currentItem.questionFormat}), 소재 방향은 최대한 유지하면서 품질만 끌어올리세요.`;
+
+  onStatus?.(`${currentItem.itemNo}번 문항 원어민 구어체·타당도 정밀 검수 중...`);
+  return refineSingleItem(apiKey, currentItem, auditInstruction, params, onStatus);
 }

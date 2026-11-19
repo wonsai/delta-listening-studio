@@ -15,6 +15,8 @@ import {
   Plus,
   Wand2,
   RotateCcw,
+  Zap,
+  Settings2,
 } from 'lucide-react';
 import {
   DifficultyLevel,
@@ -133,8 +135,10 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   generating,
   statusMessage,
 }) => {
+  const [setupMode, setSetupMode] = useState<'simple' | 'detailed'>('simple');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [stdDomainTab, setStdDomainTab] = useState<'first' | 'second' | 'all'>('first');
+  const [activePresetId, setActivePresetId] = useState<string>('');
 
   const standards = getAchievementStandardsForSubject(params.subject);
   const primaryStandards = getListeningPrimaryStandardsForSubject(params.subject);
@@ -321,18 +325,167 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   // 예상 재생 시간 안내 (약 140 WPM + 턴간 쉼)
   const estSeconds = Math.round((params.targetWordCount / 140) * 60 + 6);
 
+  // 간편 출제 원클릭 프리셋 목록
+  const quickPresets: Array<{
+    id: string;
+    title: string;
+    badge: string;
+    desc: string;
+    patch: Partial<GenerationParams>;
+  }> =
+    params.mode === 'ib'
+      ? [
+          {
+            id: 'ib_balanced',
+            title: '정기고사 균형형 (추천)',
+            badge: '4문항 · 중',
+            desc: '선택형 2 + 포스터 빈칸 1 + 우리말 서술 1 (가장 표준적인 학교 시험 구성)',
+            patch: {
+              itemCount: 4,
+              difficulty: '중',
+              targetWordCount: 115,
+              questionFormatMode: 'counts',
+              questionFormats: ['mcq_5', 'gap_poster', 'short_kr'],
+              questionFormatCounts: { mcq_5: 2, gap_poster: 1, short_kr: 1 },
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+          {
+            id: 'ib_perf',
+            title: '수행평가 서답형 집중',
+            badge: '3문항 · 중',
+            desc: '포스터 빈칸 1 + 우리말 서술 1 + 영어 단답/요약 1 (활동지·채점기준표 포함)',
+            patch: {
+              itemCount: 3,
+              difficulty: '중',
+              targetWordCount: 115,
+              questionFormatMode: 'counts',
+              questionFormats: ['gap_poster', 'short_kr', 'short_en'],
+              questionFormatCounts: { gap_poster: 1, short_kr: 1, short_en: 1 },
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+          {
+            id: 'ib_easy',
+            title: '쉬운 수업 형성평가',
+            badge: '2문항 · 하',
+            desc: '초빈출 일상 구어·짧은 대본(~90단어) · 선택형 1 + 포스터 빈칸 1',
+            patch: {
+              itemCount: 2,
+              difficulty: '하',
+              targetWordCount: 90,
+              questionFormatMode: 'counts',
+              questionFormats: ['mcq_5', 'gap_poster'],
+              questionFormatCounts: { mcq_5: 1, gap_poster: 1 },
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+          {
+            id: 'ib_deep',
+            title: '사고력·추론 심화 세트',
+            badge: '4문항 · 상',
+            desc: '추론 객관식 2 + T/F 근거 서술 1 + 우리말 의도/이유 서술 1 (~140단어)',
+            patch: {
+              itemCount: 4,
+              difficulty: '상',
+              targetWordCount: 140,
+              questionFormatMode: 'counts',
+              questionFormats: ['mcq_5', 'tf_justify', 'short_kr'],
+              questionFormatCounts: { mcq_5: 2, tf_justify: 1, short_kr: 1 },
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+        ]
+      : [
+          {
+            id: 'std_standard',
+            title: '학교 듣기평가 표준 (추천)',
+            badge: '5문항 · 중',
+            desc: '100% 5지선다 · 일상 구어(~115단어) · 유형별 영/한 보기 자동 적용',
+            patch: {
+              itemCount: 5,
+              difficulty: '중',
+              targetWordCount: 115,
+              mcqOptionLanguage: 'auto',
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+          {
+            id: 'std_mini',
+            title: '수업 미니 듣기 테스트',
+            badge: '3문항 · 하',
+            desc: '부담 없는 짧은 대화·안내문(~90단어) · 쉬운 일상 구어체',
+            patch: {
+              itemCount: 3,
+              difficulty: '하',
+              targetWordCount: 90,
+              mcqOptionLanguage: 'auto',
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+          {
+            id: 'std_mock',
+            title: '실전 모의고사 세트',
+            badge: '8문항 · 중',
+            desc: '대화·안내방송·음성메시지·강연 골고루 배분 (~120단어)',
+            patch: {
+              itemCount: 8,
+              difficulty: '중',
+              targetWordCount: 120,
+              mcqOptionLanguage: 'auto',
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+          {
+            id: 'std_hard',
+            title: '고난도 변별 세트',
+            badge: '5문항 · 상',
+            desc: '패러프레이징·추론·매력적 오답 중심 (~145단어)',
+            patch: {
+              itemCount: 5,
+              difficulty: '상',
+              targetWordCount: 145,
+              mcqOptionLanguage: 'auto',
+              textTypeMode: 'auto',
+              selectedStandards: [],
+              selectedSkills: [],
+            },
+          },
+        ];
+
+  const applyQuickPreset = (preset: (typeof quickPresets)[number]) => {
+    setActivePresetId(preset.id);
+    onChangeParams(preset.patch);
+  };
+
   return (
     <div className="space-y-6">
-      {/* 상단 요약 헤더 */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+      {/* 상단 요약 헤더 + 간편/상세 모드 전환 */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-xs font-extrabold text-[#357DC7] uppercase tracking-wider mb-1">
               <Sliders className="w-4 h-4" />
-              STEP 2 OF 4 · 세부 출제 파라미터 조정
+              STEP 2 OF 4 · 출제 조건 설정
             </div>
             <h1 className="text-2xl font-extrabold text-[#09396A]">
-              성취기준 · 어휘 수준 · 문항별 구성 조건을 설정하세요
+              {setupMode === 'simple'
+                ? '핵심 조건만 고르고 바로 출제하세요'
+                : '성취기준 · 어휘 수준 · 문항별 세부 조건을 조정하세요'}
             </h1>
             <p className="text-sm text-slate-600 mt-1">
               현재 선택:{' '}
@@ -362,8 +515,445 @@ export const Step2Parameters: React.FC<Step2Props> = ({
             1단계로 이전
           </button>
         </div>
+
+        {/* 간편 출제 vs 상세 설정 탭 */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 gap-1">
+            <button
+              type="button"
+              onClick={() => setSetupMode('simple')}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-extrabold transition ${
+                setupMode === 'simple'
+                  ? 'bg-[#09396A] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              간편 출제 모드 (추천 · 빠른 출제)
+            </button>
+            <button
+              type="button"
+              onClick={() => setSetupMode('detailed')}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-extrabold transition ${
+                setupMode === 'detailed'
+                  ? 'bg-[#09396A] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              상세 교육과정 설정 (성취기준 · 평가기능 · 별표2/4)
+            </button>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            {setupMode === 'simple'
+              ? '성취기준·평가기능·담화유형은 과목에 맞춰 자동 최적화되며, 원어민 구어체·듣기 타당도 원칙이 자동 적용됩니다.'
+              : '문항별 성취기준, 평가기능, 수행지시어, 객관식 보기 언어, 의사소통 기능/구문을 직접 세밀하게 제어합니다.'}
+          </span>
+        </div>
       </div>
 
+      {/* ================================================================= */}
+      {/* ⚡ 간편 출제 모드 (기본 화면)                                      */}
+      {/* ================================================================= */}
+      {setupMode === 'simple' && (
+        <div className="space-y-5">
+          {/* 원클릭 추천 프리셋 */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Wand2 className="w-5 h-5 text-[#357DC7]" />
+                <h2 className="text-base font-extrabold text-slate-900">
+                  원클릭 추천 프리셋 (클릭하면 아래 조건이 자동 세팅됩니다)
+                </h2>
+              </div>
+              <span className="text-[11px] font-bold text-[#357DC7] bg-[#EAF2FB] px-2.5 py-1 rounded-full">
+                원어민 일상 구어체 · 듣기 전용 타당도 자동 검증
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {quickPresets.map((preset) => {
+                const isSelected = activePresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyQuickPreset(preset)}
+                    className={`text-left p-4 rounded-xl border-2 transition ${
+                      isSelected
+                        ? 'border-[#09396A] bg-[#F4F8FD] shadow-xs'
+                        : 'border-slate-200 bg-white hover:border-[#357DC7]/60 hover:bg-slate-50/70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-xs font-extrabold text-[#09396A]">
+                        {preset.title}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EAF2FB] text-[#09396A] shrink-0">
+                        {preset.badge}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {preset.desc}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 핵심 4항목 빠른 조정 */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+              <Layers className="w-5 h-5 text-[#09396A]" />
+              핵심 출제 조건 (4가지만 확인하면 바로 출제할 수 있습니다)
+            </h2>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* 1) 문항 수 */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-800">
+                    ① 출제 문항 수
+                  </label>
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#09396A] text-white text-xs font-extrabold">
+                    총 {params.itemCount}문항
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    value={params.itemCount}
+                    onChange={(e) => {
+                      setActivePresetId('');
+                      handleItemCountChange(Number(e.target.value));
+                    }}
+                    className="flex-1 accent-[#09396A]"
+                  />
+                </div>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4, 5, 8].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => {
+                        setActivePresetId('');
+                        handleItemCountChange(n);
+                      }}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition ${
+                        params.itemCount === n
+                          ? 'bg-[#09396A] text-white border-[#09396A]'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {n}문항
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2) 난이도 & 대본 길이 */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-800">
+                    ② 듣기 난이도 및 지문 길이
+                  </label>
+                  <span className="text-[11px] font-bold text-[#357DC7]">
+                    약 {params.targetWordCount}단어 (재생 약 {estSeconds}초)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      {
+                        lv: '하' as DifficultyLevel,
+                        sub: '초빈출 쉬운 구어',
+                      },
+                      {
+                        lv: '중' as DifficultyLevel,
+                        sub: '표준 일상 구어',
+                      },
+                      {
+                        lv: '상' as DifficultyLevel,
+                        sub: '추론·재진술 심화',
+                      },
+                    ] as const
+                  ).map((d) => (
+                    <button
+                      key={d.lv}
+                      type="button"
+                      onClick={() => {
+                        setActivePresetId('');
+                        onChangeParams({ difficulty: d.lv });
+                      }}
+                      className={`p-2 rounded-xl border text-center transition ${
+                        params.difficulty === d.lv
+                          ? 'bg-[#09396A] text-white border-[#09396A]'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="text-xs font-extrabold">난이도 {d.lv}</div>
+                      <div
+                        className={`text-[10px] mt-0.5 ${
+                          params.difficulty === d.lv
+                            ? 'text-blue-100'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        {d.sub}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-600 shrink-0 mr-1">
+                    지문 분량:
+                  </span>
+                  {[
+                    { label: '짧게 (90단어)', w: 90 },
+                    { label: '표준 (115단어)', w: 115 },
+                    { label: '길게 (145단어)', w: 145 },
+                  ].map((len) => (
+                    <button
+                      key={len.w}
+                      type="button"
+                      onClick={() => {
+                        setActivePresetId('');
+                        onChangeParams({ targetWordCount: len.w });
+                      }}
+                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border transition ${
+                        Math.abs(params.targetWordCount - len.w) <= 10
+                          ? 'bg-[#EAF2FB] text-[#09396A] border-[#357DC7]'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {len.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3) 문항 형식 / 보기 언어 빠른 선택 */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <label className="block text-xs font-extrabold text-slate-800">
+                  ③ {params.mode === 'ib' ? '대구형 문항 형식 구성' : '객관식 보기(①~⑤) 언어'}
+                </label>
+
+                {params.mode === 'ib' ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(() => {
+                      const isCounts = params.questionFormatMode === 'counts';
+                      const cntMap = params.questionFormatCounts || {};
+                      const hasMcq = isCounts
+                        ? Number(cntMap.mcq_5 || 0) > 0
+                        : params.questionFormats.includes('mcq_5');
+                      const hasCr = isCounts
+                        ? (['gap_poster', 'short_kr', 'short_en', 'tf_justify'] as QuestionFormatType[]).some(
+                            (k) => Number(cntMap[k] || 0) > 0
+                          )
+                        : params.questionFormats.some((f) => f !== 'mcq_5');
+
+                      return [
+                        {
+                          label: '균형 혼합',
+                          sub: '선택+서답 혼합',
+                          active: hasMcq && hasCr,
+                          onClick: () =>
+                            onChangeParams({
+                              questionFormatMode: 'auto',
+                              questionFormats: ['mcq_5', 'gap_poster', 'short_kr'],
+                            }),
+                        },
+                        {
+                          label: '서답형 집중',
+                          sub: '포스터·서술형',
+                          active: !hasMcq && hasCr,
+                          onClick: () =>
+                            onChangeParams({
+                              questionFormatMode: 'auto',
+                              questionFormats: ['gap_poster', 'short_kr', 'short_en'],
+                            }),
+                        },
+                        {
+                          label: '선택형 집중',
+                          sub: '5지선다 위주',
+                          active: hasMcq && !hasCr,
+                          onClick: () =>
+                            onChangeParams({
+                              questionFormatMode: 'auto',
+                              questionFormats: ['mcq_5'],
+                            }),
+                        },
+                      ];
+                    })().map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => {
+                          setActivePresetId('');
+                          opt.onClick();
+                        }}
+                        className={`p-2.5 rounded-xl border text-center transition ${
+                          opt.active
+                            ? 'bg-[#09396A] text-white border-[#09396A]'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold">{opt.label}</div>
+                        <div
+                          className={`text-[10px] mt-0.5 ${
+                            opt.active ? 'text-blue-100' : 'text-slate-500'
+                          }`}
+                        >
+                          {opt.sub}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        {
+                          mode: 'auto' as McqOptionLanguageMode,
+                          label: '기출 기준 자동',
+                          sub: '유형별 영/한',
+                        },
+                        {
+                          mode: 'ko' as McqOptionLanguageMode,
+                          label: '전체 한국어',
+                          sub: '①~⑤ 한국어',
+                        },
+                        {
+                          mode: 'en' as McqOptionLanguageMode,
+                          label: '전체 영어',
+                          sub: '①~⑤ English',
+                        },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.mode}
+                        type="button"
+                        onClick={() =>
+                          onChangeParams({ mcqOptionLanguage: opt.mode })
+                        }
+                        className={`p-2.5 rounded-xl border text-center transition ${
+                          (params.mcqOptionLanguage || 'auto') === opt.mode
+                            ? 'bg-[#09396A] text-white border-[#09396A]'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold">{opt.label}</div>
+                        <div
+                          className={`text-[10px] mt-0.5 ${
+                            (params.mcqOptionLanguage || 'auto') === opt.mode
+                              ? 'text-blue-100'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {opt.sub}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-500">
+                  {params.mode === 'ib'
+                    ? '문항 형식별 정확한 개수(예: 선택 2 + 포스터 1 + 서술 1)를 직접 지정하려면 위 프리셋을 고르거나 [상세 교육과정 설정]을 열어 조정하세요.'
+                    : '모든 문항이 5지선다 객관식으로 출제되며, 유형별(응답·상황·도표 등) 기출 표준 구조가 자동 적용됩니다.'}
+                </p>
+              </div>
+
+              {/* 4) 소재·주제 선택 */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-800">
+                    ④ 소재 · 주제 (선택 사항)
+                  </label>
+                  <span className="text-[11px] text-slate-500">
+                    {params.selectedTopics.length === 0
+                      ? '자동 다양화 (권장)'
+                      : `${params.selectedTopics.length}개 선택됨`}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onChangeParams({ selectedTopics: [] })}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${
+                      params.selectedTopics.length === 0
+                        ? 'bg-[#09396A] text-white border-[#09396A]'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    전체 자동 다양화
+                  </button>
+                  {TOPICS.map((t) => {
+                    const active = params.selectedTopics.includes(t.value);
+                    return (
+                      <button
+                        key={t.value}
+                        type="button"
+                        onClick={() =>
+                          onChangeParams({
+                            selectedTopics: toggleArrayItem(
+                              params.selectedTopics,
+                              t.value
+                            ),
+                          })
+                        }
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${
+                          active
+                            ? 'bg-[#357DC7] text-white border-[#357DC7]'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {t.value}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <input
+                  type="text"
+                  value={params.customTopicDetail}
+                  onChange={(e) =>
+                    onChangeParams({ customTopicDetail: e.target.value })
+                  }
+                  placeholder="원하는 구체적 상황/주제가 있으면 1줄로 입력 (예: 학교 축제 부스 운영, 도서관 이용 안내)"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#357DC7]"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 text-xs text-slate-600">
+              <span>
+                특정 성취기준, 평가 기능(15종), 수행지시어, 필수 어휘, [별표 2·4] 문법 구문까지 세밀하게 지정하고 싶으신가요?
+              </span>
+              <button
+                type="button"
+                onClick={() => setSetupMode('detailed')}
+                className="inline-flex items-center gap-1 font-extrabold text-[#357DC7] hover:text-[#09396A] underline underline-offset-2"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+                상세 교육과정 설정 열기 →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* 🎛️ 상세 교육과정 설정 모드 (기존 모든 세부 옵션 완벽 보존)           */}
+      {/* ================================================================= */}
+      {setupMode === 'detailed' && (
+      <>
       {/* 1. 문항 수 및 문항 세부 형식 (문항 수 연동 지원) */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1717,6 +2307,8 @@ export const Step2Parameters: React.FC<Step2Props> = ({
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* 하단 액션 바 */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">

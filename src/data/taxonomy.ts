@@ -933,7 +933,7 @@ export const VOCAB_LEVELS: VocabLevelMeta[] = [
     shortLabel: '중학·실생활회화 (1,500단어 이내)',
     wordPoolDesc: '1,500단어 이내 (CEFR A2)',
     cefr: 'CEFR A2',
-    promptGuide: '2022 개정 영어과 교육과정 [별표 3] 기준 중학교 영어 및 실생활 영어 회화 권장 어휘(1,500단어 이내, CEFR A2) 범위 내의 친숙하고 평이한 어휘와 명확한 문장 구조를 사용하세요.',
+    promptGuide: '2022 개정 [별표 3] 중학교·실생활 회화 권장 어휘(1,500단어 이내, CEFR A2) 범위의 아주 친숙한 일상 구어체만 사용하세요. 한 문장 12단어 내외로 간결하게 쓰고, 추상적·전문적 문어 어휘(예: meteorological, utilize, relocate, ecological 등)를 절대 쓰지 마세요.',
   },
   {
     id: 'high1_common',
@@ -941,7 +941,7 @@ export const VOCAB_LEVELS: VocabLevelMeta[] = [
     shortLabel: '고1 공통·기본영어 (1,600~1,800단어)',
     wordPoolDesc: '1,600~1,800단어 이내 (CEFR B1)',
     cefr: 'CEFR B1',
-    promptGuide: '2022 개정 영어과 교육과정 [별표 3] 기준 고등학교 공통영어1·2(1,800단어 이내) 및 기본영어1·2(1,600단어 이내, CEFR B1) 수준의 자연스러운 구어체 어휘를 사용하고 지나치게 현학적인 전문용어는 피하세요.',
+    promptGuide: '2022 개정 [별표 3] 고1 공통·기본영어(1,600~1,800단어 이내, CEFR B1) 수준의 자연스러운 원어민 일상 구어체만 사용하세요. 귀로 1회 듣고 바로 이해할 수 있는 쉬운 동사·명사(weather forecast, move, fix, start, bad weather 등)를 우선하고, 문어체·학술어·한국어 직역 전문용어를 철저히 배제하세요.',
   },
   {
     id: 'high2_general',
@@ -949,7 +949,7 @@ export const VOCAB_LEVELS: VocabLevelMeta[] = [
     shortLabel: '일반·진로 선택 (2,000~2,500단어)',
     wordPoolDesc: '2,000~2,500단어 이내 (CEFR B1+~B2)',
     cefr: 'CEFR B1+~B2',
-    promptGuide: '2022 개정 영어과 교육과정 [별표 3] 기준 영어Ⅰ·직무 영어(2,000단어 이내) 및 영어Ⅱ(2,500단어 이내, CEFR B1+~B2) 수준의 어휘와 논리적 연결어를 적절히 포함하세요.',
+    promptGuide: '2022 개정 [별표 3] 영어Ⅰ·직무 영어(2,000단어) ~ 영어Ⅱ(2,500단어, CEFR B1+~B2) 수준의 자연스러운 구어체와 담화 연결어를 사용하세요. 강연·발표가 아닌 일반 대화에서는 불필요한 학술·행정 문어체 직역을 피하고 원어민이 실제 말하는 표현으로 구성하세요.',
   },
   {
     id: 'high3_advanced',
@@ -957,7 +957,7 @@ export const VOCAB_LEVELS: VocabLevelMeta[] = [
     shortLabel: '심화 영어·수능 (2,800단어 이내)',
     wordPoolDesc: '2,800단어 이내 (CEFR B2)',
     cefr: 'CEFR B2',
-    promptGuide: '2022 개정 영어과 교육과정 [별표 3] 기준 심화 영어(2,800단어 이내) 및 대학수학능력시험 영어듣기 수준(CEFR B2)의 학술·교양 어휘와 패러프레이징(재진술)을 적극 활용하세요.',
+    promptGuide: '2022 개정 [별표 3] 심화 영어(2,800단어 이내) 및 수능 영어듣기 수준(CEFR B2)의 자연스러운 구어체와 패러프레이징을 활용하세요. 난이도는 생소한 저빈도 전문어가 아니라 맥락 추론과 정보 재진술로 구현하세요.',
   },
 ];
 
