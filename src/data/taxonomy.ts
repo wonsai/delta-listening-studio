@@ -6,11 +6,45 @@ export interface DirectiveItem {
   description: string;
 }
 
+export type CsatCategoryId = '대의 파악' | '세부 정보' | '간접 말하기' | '복합 이해';
+
+export interface CsatCategoryMeta {
+  id: CsatCategoryId;
+  rangeLabel: string;
+  description: string;
+}
+
+export const CSAT_CATEGORIES: CsatCategoryMeta[] = [
+  {
+    id: '대의 파악',
+    rangeLabel: '1~3번',
+    description: '담화 목적 · 대화자 의견 · 담화 요지 (한국어 보기)',
+  },
+  {
+    id: '세부 정보',
+    rangeLabel: '5~10번',
+    description: '할 일 · 금액 계산 · 이유 · 언급안됨 · 내용일치 · 도표 (4번 그림 제외)',
+  },
+  {
+    id: '간접 말하기',
+    rangeLabel: '11~15번',
+    description: '짧은/긴 대화 응답 · 상황 설명 후 할 말 (영어 보기)',
+  },
+  {
+    id: '복합 이해',
+    rangeLabel: '16~17번',
+    description: '긴 담화 2회 청취 · 주제 파악 / 언급되지 않은 것 (영어 보기)',
+  },
+];
+
 export interface SkillItem {
   value: string;
   label?: string;                 // 화면 표시용 라벨 (예: "담화의 목적 파악")
   csatNo?: string;                // 수능 영어 듣기 공식 문항 번호 (예: "1번", "11~12번")
   csatPart?: '듣기' | '간접 말하기'; // 수능 영어 듣기 영역 구분
+  csatCategory?: CsatCategoryId;  // 수능 듣기 4대 출제 영역
+  csatTextType?: string;          // 수능 공식 지문 형태 (담화문 / 대화문 / 상황 설명 / 긴 강연)
+  csatMarks?: string;             // 수능 표준 배점 (2점 / 2~3점)
   mode: 'ib' | 'std';
   directive: string;
   stdSuffix: string; // 예: "01-01"
@@ -247,7 +281,7 @@ export const IB_SKILLS: SkillItem[] = [
     description: '말이나 글의 핵심 주제나 화자의 요지·주장을 파악한다.',
     defaultOptionLang: 'ko',
     optionStyleHintEn: '수능·IB 주제·제목 유형 스타일의 병렬 구조 영어 명사구 또는 화자의 주장 영어 문장 5개',
-    optionStyleHintKo: '화자의 의견·요지를 담은 우리말 완결 문장("~해야 한다.") 또는 핵심 주제 우리말 명사구 5개 (자료집 예시 2 표준)',
+    optionStyleHintKo: '화자의 의견·요지를 담은 우리말 완결 문장("~해야 한다.") 또는 핵심 주제 우리말 명사구 5개',
   },
   {
     value: '심정·의도 파악',
@@ -267,7 +301,7 @@ export const IB_SKILLS: SkillItem[] = [
     description: '말이나 글에 나타난 일이나 사건의 인과·선후·비교 등 논리적 관계를 추론한다.',
     defaultOptionLang: 'ko',
     optionStyleHintEn: '원인·이유·인과관계를 나타내는 병렬 구조 영어 진술문("Because ...", "Due to ..." 등) 5개',
-    optionStyleHintKo: '인과관계(이유·원인)를 나타내는 "~해서 / ~때문에" 어미가 통일된 우리말 선택지 5개 (자료집 예시 4 표준)',
+    optionStyleHintKo: '인과관계(이유·원인)를 나타내는 "~해서 / ~때문에" 어미가 통일된 우리말 선택지 5개',
   },
   {
     value: '함축적 의미 추론',
@@ -388,6 +422,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '담화의 목적 파악',
     csatNo: '1번',
     csatPart: '듣기',
+    csatCategory: '대의 파악',
+    csatTextType: '단독 담화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '03',
@@ -401,6 +438,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '대화자의 의견 파악',
     csatNo: '2번',
     csatPart: '듣기',
+    csatCategory: '대의 파악',
+    csatTextType: '2인 대화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '02',
@@ -414,6 +454,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '담화의 요지 파악',
     csatNo: '3번',
     csatPart: '듣기',
+    csatCategory: '대의 파악',
+    csatTextType: '단독 담화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '02',
@@ -427,6 +470,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '할 일 · 부탁한 일',
     csatNo: '5번',
     csatPart: '듣기',
+    csatCategory: '세부 정보',
+    csatTextType: '2인 대화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '01',
@@ -440,6 +486,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '지불할 금액 계산',
     csatNo: '6번',
     csatPart: '듣기',
+    csatCategory: '세부 정보',
+    csatTextType: '2인 대화문',
+    csatMarks: '2~3점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '01',
@@ -453,6 +502,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '이유 파악',
     csatNo: '7번',
     csatPart: '듣기',
+    csatCategory: '세부 정보',
+    csatTextType: '2인 대화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '추론',
     stdSuffix: '04',
@@ -466,6 +518,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '언급되지 않은 것',
     csatNo: '8번',
     csatPart: '듣기',
+    csatCategory: '세부 정보',
+    csatTextType: '2인 대화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '01',
@@ -479,6 +534,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '담화 내용 불일치/일치',
     csatNo: '9번',
     csatPart: '듣기',
+    csatCategory: '세부 정보',
+    csatTextType: '단독 담화문',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '01',
@@ -492,6 +550,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '도표 · 조건표 선택',
     csatNo: '10번',
     csatPart: '듣기',
+    csatCategory: '세부 정보',
+    csatTextType: '2인 대화문',
+    csatMarks: '2~3점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '01',
@@ -505,6 +566,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '짧은 대화 응답',
     csatNo: '11~12번',
     csatPart: '간접 말하기',
+    csatCategory: '간접 말하기',
+    csatTextType: '짧은 대화(3~4턴)',
+    csatMarks: '2점',
     mode: 'std',
     directive: '상호작용',
     stdSuffix: '05',
@@ -518,6 +582,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '긴 대화 응답',
     csatNo: '13~14번',
     csatPart: '간접 말하기',
+    csatCategory: '간접 말하기',
+    csatTextType: '긴 대화(7~10턴)',
+    csatMarks: '2~3점',
     mode: 'std',
     directive: '상호작용',
     stdSuffix: '05',
@@ -531,6 +598,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '상황 설명 후 할 말',
     csatNo: '15번',
     csatPart: '간접 말하기',
+    csatCategory: '간접 말하기',
+    csatTextType: '상황 설명 담화',
+    csatMarks: '2~3점',
     mode: 'std',
     directive: '추론',
     stdSuffix: '05',
@@ -544,6 +614,9 @@ export const STD_SKILLS: SkillItem[] = [
     label: '복합 담화 (주제 · 언급되지 않은 것)',
     csatNo: '16~17번',
     csatPart: '듣기',
+    csatCategory: '복합 이해',
+    csatTextType: '긴 강연 담화(2회)',
+    csatMarks: '2점',
     mode: 'std',
     directive: '파악',
     stdSuffix: '02',
@@ -885,7 +958,7 @@ export const TOPICS: TopicItem[] = [
   },
 ];
 
-// 문항 형식 옵션 (대구형 IB 샘플 기반 8종 + 정기시험 5지선다 선택형)
+// 문항 형식 옵션 (IB DP English B Paper 2 기출 6종 + IB 확장·대구형 3종 + 기존 수능형 5지선다)
 export interface QuestionFormatMeta {
   id: QuestionFormatType;
   label: string;
@@ -893,6 +966,9 @@ export interface QuestionFormatMeta {
   isConstructed: boolean;
   choiceCount?: 3 | 5;
   group: 'ib_paper2' | 'daegu_ib' | 'std_mcq';
+  ibTaskInstruction?: string; // 실제 IB Paper 2 영문 기출 지시문 패턴
+  typicalMarks?: string;      // IB / 수능 권장 배점
+  ibTextPairing?: string;     // 어울리는 오디오 텍스트 유형
   description: string;
   pdfRef: string;
 }
@@ -905,8 +981,23 @@ export const QUESTION_FORMATS: QuestionFormatMeta[] = [
     isConstructed: false,
     choiceCount: 3,
     group: 'ib_paper2',
-    description: 'Choose the correct answer — 질문형 또는 문장 완성형(…) 3지선다 객관식 (IB Paper 2 · 자료집 A형 표준)',
-    pdfRef: 'IB Paper 2 · A형',
+    ibTaskInstruction: 'Choose the correct answer.',
+    typicalMarks: '2점',
+    ibTextPairing: '대화 · 인터뷰 · 강연',
+    description: '질문형 또는 문장 완성형(…) 3지선다 객관식 — 요지·화자 태도·함축 추론 평가 (IB Paper 2 최다 출제)',
+    pdfRef: 'IB Paper 2 · MCQ',
+  },
+  {
+    id: 'gap_poster',
+    label: '노트·표·안내문 빈칸 완성형 (3단어 이내)',
+    shortBadge: '노트·표 빈칸(≤3단어)',
+    isConstructed: true,
+    group: 'ib_paper2',
+    ibTaskInstruction: 'Complete the gaps. Use no more than three words.',
+    typicalMarks: '3점',
+    ibTextPairing: '안내 방송 · 강연 · 인터뷰',
+    description: '노트·안내문·포스터·요약표의 빈칸 [–1–]~[–3–] 완성 — 괄호 허용·대체 정답 IB Markscheme 적용',
+    pdfRef: 'IB Paper 2 · Gap-fill',
   },
   {
     id: 'ib_multi_true',
@@ -914,8 +1005,23 @@ export const QUESTION_FORMATS: QuestionFormatMeta[] = [
     shortBadge: '참인 진술 복수선택',
     isConstructed: true,
     group: 'ib_paper2',
-    description: 'Choose the 2(또는 5) true statements — 제시된 진술문(A~E / A~J) 중 대본과 일치하는 참인 진술 고르기',
-    pdfRef: 'IB Paper 2 · DELTA multi',
+    ibTaskInstruction: 'Choose the [two/four] true statements.',
+    typicalMarks: '2~4점',
+    ibTextPairing: '담화 · 인터뷰 · 대화',
+    description: '제시된 진술문(A~E / A~H) 중 대본 내용과 일치하는 참인 진술 복수 선택 (초과 선택 감점 규칙 반영)',
+    pdfRef: 'IB Paper 2 · Multi-True',
+  },
+  {
+    id: 'short_en',
+    label: 'IB 영어 단답형 (Wh-질문)',
+    shortBadge: 'IB 영어 단답형',
+    isConstructed: true,
+    group: 'ib_paper2',
+    ibTaskInstruction: 'Answer the following questions.',
+    typicalMarks: '3점',
+    ibTextPairing: '인터뷰 · 강연 · 대화',
+    description: 'Who·What·Why·How 직접 질문에 영어 핵심 어구로 답하기 (Target / Accept / Do not accept 채점기준)',
+    pdfRef: 'IB Paper 2 · Short Answer',
   },
   {
     id: 'ib_speaker_match',
@@ -923,63 +1029,71 @@ export const QUESTION_FORMATS: QuestionFormatMeta[] = [
     shortBadge: '화자·관점 매칭표',
     isConstructed: true,
     group: 'ib_paper2',
-    description: 'Tick [✓] Whose opinion? (Speaker A / Speaker B / Both) 또는 인물·항목 짝짓기(Match)',
-    pdfRef: 'IB Paper 2 · DELTA match',
+    ibTaskInstruction: 'Tick [✓] Speaker A / Speaker B / Both.',
+    typicalMarks: '3~4점',
+    ibTextPairing: '토론 · 인터뷰 · 2인 대화',
+    description: '두 화자의 의견·경험을 듣고 각 진술의 주체(Speaker A / Speaker B / Both)를 체크표에 분류',
+    pdfRef: 'IB Paper 2 · Speaker Match',
   },
   {
-    id: 'gap_poster',
-    label: '노트·안내문·표 빈칸 완성형 (3단어 이내)',
-    shortBadge: '노트·포스터 빈칸',
+    id: 'ib_match_info',
+    label: '정보·문장 연결 매칭형 (여분 보기 포함)',
+    shortBadge: '정보·문장 매칭',
     isConstructed: true,
     group: 'ib_paper2',
-    description: 'Complete the following gaps (Use no more than three words) — e-Flyer·노트·포스터·표 빈칸 [–1–]~[–3–] 완성',
-    pdfRef: 'IB Paper 2 · 자료집 A/C형',
-  },
-  {
-    id: 'short_en',
-    label: '영어 단답형 (IB Wh-질문)',
-    shortBadge: 'IB 영어 단답형',
-    isConstructed: true,
-    group: 'ib_paper2',
-    description: 'Answer the following questions — 핵심 정보를 영어 단어·구·문장으로 답하기 (Markscheme Accept/Reject 기준)',
-    pdfRef: 'IB Paper 2 · DELTA short',
+    ibTaskInstruction: 'Match items / sentence halves (extra options).',
+    typicalMarks: '3~4점',
+    ibTextPairing: '강연 · 인터뷰 · 안내 담화',
+    description: '문장 앞·뒷부분 또는 인물·주제(1~4)와 핵심 설명(A~F 여분 오답 포함)을 정확히 짝짓기',
+    pdfRef: 'IB Paper 2 · Matching',
   },
   {
     id: 'tf_justify',
-    label: '진위(T/F)·동의 판별 및 근거 서술형',
+    label: '진위(T/F) 판별 및 근거 서술형',
     shortBadge: 'T/F + 근거 서술',
     isConstructed: true,
     group: 'daegu_ib',
-    description: '진술문의 참/거짓(True/False) 또는 동의/반대를 판별하고 담화 속 핵심 근거를 함께 서술',
-    pdfRef: 'DELTA tfj · 자료집 B형',
+    ibTaskInstruction: 'State True or False and justify your answer.',
+    typicalMarks: '3~4점',
+    ibTextPairing: '토론 · 강연 · 대화',
+    description: '진술문의 참/거짓(True/False)을 판별하고 담화 속 핵심 근거를 함께 서술 (판정+근거 결합 채점)',
+    pdfRef: 'IB 확장 · T/F Justification',
   },
   {
     id: 'ib_order',
-    label: '순서 배열형 (사건·절차 조직)',
+    label: '사건·절차 순서 배열형 (Sequencing)',
     shortBadge: '순서 배열형',
     isConstructed: true,
     group: 'daegu_ib',
-    description: '담화·대화에 제시된 사건·절차·지시사항(A~C/D)을 들은 순서대로 올바르게 배열',
-    pdfRef: 'DELTA IB order',
+    ibTaskInstruction: 'Put the events/steps in the correct order.',
+    typicalMarks: '2~3점',
+    ibTextPairing: '안내 방송 · 절차 설명 · 대화',
+    description: '담화·대화에 제시된 사건·절차·지시사항(A~D)을 들은 순서대로 올바르게 배열',
+    pdfRef: 'IB 확장 · Sequencing',
   },
   {
     id: 'short_kr',
-    label: '우리말 의도·이유·함축 서술형',
+    label: '대구형 우리말 의도·이유·함축 서술형',
     shortBadge: '우리말 서술형',
     isConstructed: true,
     group: 'daegu_ib',
-    description: '음성 메시지·대화를 듣고 화자의 의도(요청 사항), 이유, 함축 의미 등을 우리말로 구체적으로 서술',
-    pdfRef: '대구 자료집 B/C형',
+    ibTaskInstruction: '화자의 의도·이유·함축 의미를 우리말로 구체적으로 서술',
+    typicalMarks: '3~4점',
+    ibTextPairing: '음성 메시지 · 대화 · 강연',
+    description: '음성 메시지·대화를 듣고 화자의 궁극적 의도(요청 사항), 이유, 함축적 의미를 우리말로 서술',
+    pdfRef: '대구형 · 우리말 서술',
   },
   {
     id: 'mcq_5',
-    label: '정기시험 5지선다 객관식 (①~⑤)',
-    shortBadge: '5지선다 선택형',
+    label: '수능형 5지선다 객관식 (①~⑤)',
+    shortBadge: '수능 5지선다',
     isConstructed: false,
     choiceCount: 5,
     group: 'std_mcq',
-    description: '정기시험 병행(대구 C형) 및 수능형 5지선다 객관식 — 요지·심정변화·인과추론·내용일치 등',
-    pdfRef: '대구 자료집 C형 · 수능',
+    typicalMarks: '2~3점',
+    ibTextPairing: '수능 1~17번 공식 유형',
+    description: '대학수학능력시험 영어 듣기(1~17번) 공식 5지선다 객관식',
+    pdfRef: '수능 1~17번 · 5지선다',
   },
 ];
 

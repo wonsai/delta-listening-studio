@@ -7,15 +7,16 @@ export type McqOptionLanguageMode = 'auto' | 'en' | 'ko';
 export type McqPromptLanguageMode = 'ko' | 'en';
 
 export type QuestionFormatType =
-  | 'ib_mcq_3'         // IB 3지선다 선택형 (A·B·C, Choose the correct answer)
-  | 'ib_multi_true'    // IB 참인 진술 복수 선택형 (Choose the 2/5 true statements)
-  | 'ib_speaker_match' // IB 화자·관점 매칭 체크표 (Whose opinion? / 짝짓기)
-  | 'gap_poster'       // IB·대구형 노트·안내문·포스터·표 빈칸 완성형 (3단어 이내)
-  | 'short_en'         // IB 영어 단답형 (Answer the following questions)
-  | 'tf_justify'       // DELTA 진위(T/F)·동의 판별 및 근거 서술형
-  | 'ib_order'         // DELTA 순서 배열형 (정보 조직·사건/절차 배열)
-  | 'short_kr'         // 대구형 우리말 의도·이유·함축 서술형
-  | 'mcq_5';           // 5지선다 객관식 (①~⑤, 수능 영어 듣기 및 대구 C형 정기시험)
+  | 'ib_mcq_3'         // IB Paper 2: 3지선다 선택형 (A·B·C, Choose the correct answer)
+  | 'gap_poster'       // IB Paper 2: 노트·안내문·표 빈칸 완성형 (3단어 이내, Complete the gaps)
+  | 'ib_multi_true'    // IB Paper 2: 참인 진술 복수 선택형 (Choose the true statements)
+  | 'short_en'         // IB Paper 2: 영어 단답형 (Answer the following questions)
+  | 'ib_speaker_match' // IB Paper 2: 화자·관점 매칭 체크표 (Whose opinion? Speaker A/B/Both)
+  | 'ib_match_info'    // IB Paper 2: 정보·문장 연결 매칭형 (Matching with extra distractors)
+  | 'tf_justify'       // IB 확장: 진위(T/F) 판별 및 근거 서술형 (True/False + Justification)
+  | 'ib_order'         // IB 확장: 사건·절차 순서 배열형 (Put the events/steps in order)
+  | 'short_kr'         // 대구형 서술: 우리말 의도·이유·함축 서술형
+  | 'mcq_5';           // 기존형(수능 연계): 5지선다 객관식 (①~⑤)
 
 export type VocabLevelId =
   | 'mid_basic'       // 중학교 기본 어휘 (1,200~1,500단어 / CEFR A2)

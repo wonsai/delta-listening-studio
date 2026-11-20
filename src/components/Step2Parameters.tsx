@@ -17,6 +17,8 @@ import {
   RotateCcw,
   Zap,
   Settings2,
+  AlertCircle,
+  KeyRound,
 } from 'lucide-react';
 import {
   DifficultyLevel,
@@ -24,14 +26,12 @@ import {
   GenerationParams,
   McqOptionLanguageMode,
   McqPromptLanguageMode,
-  QuestionFormatType,
   VocabLevelId,
 } from '../types/assessment';
 import {
   DIRECTIVES,
   EXPRESSION_GROUPS,
   IB_SKILLS,
-  QUESTION_FORMATS,
   STD_SKILLS,
   STRUCTURE_ITEMS,
   TEXT_TYPES,
@@ -42,6 +42,7 @@ import {
   getListeningPrimaryStandardsForSubject,
   getSubjectInfo,
 } from '../data/taxonomy';
+import { QuestionDistributionPanel } from './QuestionDistributionPanel';
 
 interface Step2Props {
   params: GenerationParams;
@@ -51,6 +52,9 @@ interface Step2Props {
   onSkipToEditor: () => void;
   generating: boolean;
   statusMessage: string;
+  generateError?: string | null;
+  hasApiKey?: boolean;
+  onOpenApiKeyModal?: () => void;
 }
 
 function sumCounts(map: Record<string, number | undefined>): number {
@@ -105,50 +109,6 @@ function buildRecommendedTextCounts(total: number): Record<string, number> {
   return res;
 }
 
-function buildRecommendedFormatCounts(
-  total: number
-): Partial<Record<QuestionFormatType, number>> {
-  // IB English B Paper 2 & 대구형 IB 샘플 핵심 유형 균형 배분
-  const order: QuestionFormatType[] = [
-    'ib_mcq_3',
-    'gap_poster',
-    'ib_multi_true',
-    'short_en',
-    'ib_speaker_match',
-    'tf_justify',
-    'short_kr',
-    'ib_order',
-  ];
-  const res: Partial<Record<QuestionFormatType, number>> = {};
-  for (let i = 0; i < total; i++) {
-    const key = order[i % order.length];
-    res[key] = (res[key] || 0) + 1;
-  }
-  return res;
-}
-
-function buildRecommendedStdCounts(total: number): Record<string, number> {
-  // 수능 영어 듣기 공식 유형(1~17번) 핵심 조합
-  const order = [
-    '목적',
-    '의견',
-    '숫자',
-    '긴응답',
-    '이유',
-    '내용일치',
-    '도표',
-    '상황',
-    '할일',
-    '복합(주제+언급안됨)',
-  ];
-  const res: Record<string, number> = {};
-  for (let i = 0; i < total; i++) {
-    const key = order[i % order.length];
-    res[key] = (res[key] || 0) + 1;
-  }
-  return res;
-}
-
 export const Step2Parameters: React.FC<Step2Props> = ({
   params,
   onChangeParams,
@@ -157,6 +117,9 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   onSkipToEditor,
   generating,
   statusMessage,
+  generateError,
+  hasApiKey = true,
+  onOpenApiKeyModal,
 }) => {
   const [setupMode, setSetupMode] = useState<'simple' | 'detailed'>('simple');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -213,68 +176,12 @@ export const Step2Parameters: React.FC<Step2Props> = ({
     });
   };
 
-  // 대구형(IB) 문항 형식 수량 증감
+  // 대구형(IB) / 기존형(수능) 배정 수량 집계 (요약 표시용)
   const formatAllocated = sumCounts(
     (params.questionFormatCounts || {}) as Record<string, number | undefined>
   );
   const formatRemaining = Math.max(0, params.itemCount - formatAllocated);
-
-  const handleAdjustFormatCount = (fmtId: QuestionFormatType, delta: number) => {
-    const currentMap = { ...(params.questionFormatCounts || {}) };
-    const curVal = Number(currentMap[fmtId] || 0);
-    if (delta > 0 && formatAllocated >= params.itemCount) return;
-    const nextVal = Math.max(0, curVal + delta);
-    if (nextVal === 0) {
-      delete currentMap[fmtId];
-    } else {
-      currentMap[fmtId] = nextVal;
-    }
-    onChangeParams({ questionFormatCounts: currentMap });
-  };
-
-  const handleSwitchFormatMode = (mode: DistributionMode) => {
-    if (
-      mode === 'counts' &&
-      sumCounts(
-        (params.questionFormatCounts || {}) as Record<string, number | undefined>
-      ) === 0
-    ) {
-      onChangeParams({
-        questionFormatMode: 'counts',
-        questionFormatCounts: buildRecommendedFormatCounts(params.itemCount),
-      });
-    } else {
-      onChangeParams({ questionFormatMode: mode });
-    }
-  };
-
-  // 기존형(수능 영어 듣기) 유형별 수량 증감
   const stdAllocated = sumCounts(params.stdTypeCounts || {});
-  const stdRemaining = Math.max(0, params.itemCount - stdAllocated);
-
-  const handleAdjustStdTypeCount = (skillVal: string, delta: number) => {
-    const currentMap = { ...(params.stdTypeCounts || {}) };
-    const curVal = Number(currentMap[skillVal] || 0);
-    if (delta > 0 && stdAllocated >= params.itemCount) return;
-    const nextVal = Math.max(0, curVal + delta);
-    if (nextVal === 0) {
-      delete currentMap[skillVal];
-    } else {
-      currentMap[skillVal] = nextVal;
-    }
-    onChangeParams({ stdTypeCounts: currentMap });
-  };
-
-  const handleSwitchStdTypeMode = (mode: DistributionMode) => {
-    if (mode === 'counts' && sumCounts(params.stdTypeCounts || {}) === 0) {
-      onChangeParams({
-        stdTypeMode: 'counts',
-        stdTypeCounts: buildRecommendedStdCounts(params.itemCount),
-      });
-    } else {
-      onChangeParams({ stdTypeMode: mode });
-    }
-  };
 
   // 담화·대화 유형 수량 증감
   const textAllocated = sumCounts(params.textTypeCounts || {});
@@ -397,9 +304,9 @@ export const Step2Parameters: React.FC<Step2Props> = ({
       ? [
           {
             id: 'ib_paper2_core',
-            title: 'IB Paper 2 핵심 세트 (추천)',
+            title: 'IB Paper 2 기출 핵심 (추천)',
             badge: '4문항 · 중',
-            desc: 'IB 3지선다 1 + 노트·안내문 빈칸 1 + 참인 진술 복수선택 1 + 화자 매칭 1',
+            desc: 'IB 3지선다 1 + 노트·표 빈칸(≤3단어) 1 + 참인 진술 1 + 화자 매칭 1',
             patch: {
               itemCount: 4,
               difficulty: '중',
@@ -424,36 +331,41 @@ export const Step2Parameters: React.FC<Step2Props> = ({
           },
           {
             id: 'ib_perf',
-            title: 'IB 단답·빈칸 수행평가',
-            badge: '3문항 · 중',
-            desc: '노트·안내문 빈칸(3단어 이내) 1 + 영어 단답형 1 + T/F 근거 서술 1',
+            title: 'IB 빈칸·단답 수행평가',
+            badge: '4문항 · 중',
+            desc: '노트·표 빈칸(≤3단어) 1 + 영어 단답형 1 + 정보·문장 매칭 1 + T/F 근거 1',
             patch: {
-              itemCount: 3,
+              itemCount: 4,
               difficulty: '중',
               targetWordCount: 115,
               questionFormatMode: 'counts',
-              questionFormats: ['gap_poster', 'short_en', 'tf_justify'],
-              questionFormatCounts: { gap_poster: 1, short_en: 1, tf_justify: 1 },
+              questionFormats: ['gap_poster', 'short_en', 'ib_match_info', 'tf_justify'],
+              questionFormatCounts: {
+                gap_poster: 1,
+                short_en: 1,
+                ib_match_info: 1,
+                tf_justify: 1,
+              },
               textTypeMode: 'auto',
               selectedStandards: [],
               selectedSkills: [],
             },
           },
           {
-            id: 'ib_daegu_exam',
-            title: '대구형 정기고사 혼합형',
+            id: 'ib_daegu_hybrid',
+            title: 'IB 기출 + 우리말 서술 혼합',
             badge: '4문항 · 중',
-            desc: 'IB 3지선다 1 + 5지선다 1 + 포스터 빈칸 1 + 우리말 의도·이유 서술 1',
+            desc: 'IB 3지선다 1 + 노트·표 빈칸 1 + 참인 진술 1 + 우리말 의도·이유 서술 1',
             patch: {
               itemCount: 4,
               difficulty: '중',
               targetWordCount: 115,
               questionFormatMode: 'counts',
-              questionFormats: ['ib_mcq_3', 'mcq_5', 'gap_poster', 'short_kr'],
+              questionFormats: ['ib_mcq_3', 'gap_poster', 'ib_multi_true', 'short_kr'],
               questionFormatCounts: {
                 ib_mcq_3: 1,
-                mcq_5: 1,
                 gap_poster: 1,
+                ib_multi_true: 1,
                 short_kr: 1,
               },
               textTypeMode: 'auto',
@@ -463,9 +375,9 @@ export const Step2Parameters: React.FC<Step2Props> = ({
           },
           {
             id: 'ib_deep',
-            title: 'IB 심화 추론·매칭 세트',
+            title: 'IB HL 심화 매칭·추론 세트',
             badge: '4문항 · 상',
-            desc: '화자·관점 매칭 1 + 참인 진술 복수선택 1 + 영어 단답 1 + T/F 근거 1 (~140단어)',
+            desc: '화자·관점 매칭 1 + 정보·문장 매칭 1 + 영어 단답 1 + T/F 근거 1 (~140단어)',
             patch: {
               itemCount: 4,
               difficulty: '상',
@@ -473,13 +385,13 @@ export const Step2Parameters: React.FC<Step2Props> = ({
               questionFormatMode: 'counts',
               questionFormats: [
                 'ib_speaker_match',
-                'ib_multi_true',
+                'ib_match_info',
                 'short_en',
                 'tf_justify',
               ],
               questionFormatCounts: {
                 ib_speaker_match: 1,
-                ib_multi_true: 1,
+                ib_match_info: 1,
                 short_en: 1,
                 tf_justify: 1,
               },
@@ -858,223 +770,27 @@ export const Step2Parameters: React.FC<Step2Props> = ({
                 </div>
               </div>
 
-              {/* 3) 대구형(IB) 문항 유형 또는 수능 영어 듣기 유형(1~17번) 직접 선택 */}
+              {/* 3) 대구형(IB 기출 유형) 또는 기존형(수능 1~17번 연계) 문항 배분 방식 (N문항 연동) */}
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 lg:col-span-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-xs font-extrabold text-slate-800">
-                    ③{' '}
-                    {params.mode === 'ib'
-                      ? '대구형(IB) 문항 유형 선택 (IB Paper 2 공식 5종 + 대구형 확장 4종)'
-                      : '수능 영어 듣기 유형 선택 (공식 1번~17번 · 4번 그림 제외)'}
-                  </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-slate-200/80">
+                  <span className="text-xs font-extrabold text-[#09396A]">
+                    ③ 문항 형식 · 유형 배분 방식 ({params.itemCount}문항 실시간 연동)
+                  </span>
                   <button
                     type="button"
                     onClick={() => setSetupMode('detailed')}
                     className="text-[11px] font-bold text-[#357DC7] hover:underline"
                   >
-                    유형별 문항 개수(N개) 직접 지정 →
+                    성취기준 · 보기 언어 세부 설정 →
                   </button>
                 </div>
 
-                {params.mode === 'ib' ? (
-                  <div className="space-y-2.5">
-                    <div>
-                      <div className="text-[10px] font-extrabold text-[#09396A] uppercase tracking-wider mb-1.5">
-                        IB Paper 2 Listening 공식 핵심 유형 (5종)
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {QUESTION_FORMATS.filter((f) => f.group === 'ib_paper2').map(
-                          (fmt) => {
-                            const active =
-                              params.questionFormatMode === 'counts'
-                                ? Number(params.questionFormatCounts?.[fmt.id] || 0) > 0
-                                : params.questionFormats.includes(fmt.id);
-                            const cnt = Number(
-                              params.questionFormatCounts?.[fmt.id] || 0
-                            );
-                            return (
-                              <button
-                                key={fmt.id}
-                                type="button"
-                                onClick={() => {
-                                  setActivePresetId('');
-                                  onChangeParams({
-                                    questionFormatMode: 'auto',
-                                    questionFormats: toggleArrayItem(
-                                      params.questionFormats,
-                                      fmt.id,
-                                      true
-                                    ),
-                                  });
-                                }}
-                                title={fmt.description}
-                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
-                                  active
-                                    ? 'bg-[#09396A] text-white border-[#09396A] shadow-xs'
-                                    : 'bg-white text-slate-700 border-slate-200 hover:border-[#357DC7]/60'
-                                }`}
-                              >
-                                <span>{fmt.shortBadge}</span>
-                                {params.questionFormatMode === 'counts' && cnt > 0 && (
-                                  <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">
-                                    {cnt}
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          }
-                        )}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider mb-1.5">
-                        대구형 IB 확장(DELTA 샘플) · 현장지원단 자료집 유형 (4종)
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {QUESTION_FORMATS.filter((f) => f.group !== 'ib_paper2').map(
-                          (fmt) => {
-                            const active =
-                              params.questionFormatMode === 'counts'
-                                ? Number(params.questionFormatCounts?.[fmt.id] || 0) > 0
-                                : params.questionFormats.includes(fmt.id);
-                            const cnt = Number(
-                              params.questionFormatCounts?.[fmt.id] || 0
-                            );
-                            return (
-                              <button
-                                key={fmt.id}
-                                type="button"
-                                onClick={() => {
-                                  setActivePresetId('');
-                                  onChangeParams({
-                                    questionFormatMode: 'auto',
-                                    questionFormats: toggleArrayItem(
-                                      params.questionFormats,
-                                      fmt.id,
-                                      true
-                                    ),
-                                  });
-                                }}
-                                title={fmt.description}
-                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
-                                  active
-                                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
-                                    : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'
-                                }`}
-                              >
-                                <span>{fmt.shortBadge}</span>
-                                {params.questionFormatMode === 'counts' && cnt > 0 && (
-                                  <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">
-                                    {cnt}
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          }
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    <div className="flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActivePresetId('');
-                          onChangeParams({
-                            stdTypeMode: 'auto',
-                            selectedSkills: [],
-                            stdTypeCounts: {},
-                          });
-                        }}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border transition ${
-                          params.stdTypeMode !== 'counts' &&
-                          params.selectedSkills.length === 0
-                            ? 'bg-[#09396A] text-white border-[#09396A]'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        수능 전 유형 자동 배분
-                      </button>
-                      {STD_SKILLS.map((sk) => {
-                        const isCounted =
-                          params.stdTypeMode === 'counts' &&
-                          Number(params.stdTypeCounts?.[sk.value] || 0) > 0;
-                        const active =
-                          isCounted || params.selectedSkills.includes(sk.value);
-                        const cnt = Number(params.stdTypeCounts?.[sk.value] || 0);
-                        return (
-                          <button
-                            key={sk.value}
-                            type="button"
-                            onClick={() => {
-                              setActivePresetId('');
-                              onChangeParams({
-                                stdTypeMode: 'auto',
-                                selectedSkills: toggleArrayItem(
-                                  params.selectedSkills,
-                                  sk.value
-                                ),
-                              });
-                            }}
-                            title={sk.description}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition ${
-                              active
-                                ? 'bg-[#09396A] text-white border-[#09396A] shadow-xs'
-                                : 'bg-white text-slate-700 border-slate-200 hover:border-[#357DC7]/60'
-                            }`}
-                          >
-                            <span
-                              className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
-                                active
-                                  ? 'bg-white/20 text-white'
-                                  : 'bg-[#EAF2FB] text-[#09396A]'
-                              }`}
-                            >
-                              {sk.csatNo}
-                            </span>
-                            <span>{sk.label || sk.value}</span>
-                            {isCounted && cnt > 0 && (
-                              <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">
-                                {cnt}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200/70">
-                      <span className="text-[11px] font-bold text-slate-600">
-                        객관식 보기(①~⑤) 언어:
-                      </span>
-                      {(
-                        [
-                          { mode: 'auto' as McqOptionLanguageMode, label: '수능 기출 기준 자동 (영/한)' },
-                          { mode: 'ko' as McqOptionLanguageMode, label: '전체 한국어' },
-                          { mode: 'en' as McqOptionLanguageMode, label: '전체 영어' },
-                        ] as const
-                      ).map((opt) => (
-                        <button
-                          key={opt.mode}
-                          type="button"
-                          onClick={() =>
-                            onChangeParams({ mcqOptionLanguage: opt.mode })
-                          }
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-                            (params.mcqOptionLanguage || 'auto') === opt.mode
-                              ? 'bg-[#EAF2FB] text-[#09396A] border-[#357DC7]'
-                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <QuestionDistributionPanel
+                  params={params}
+                  onChangeParams={onChangeParams}
+                  onClearPreset={() => setActivePresetId('')}
+                  showMcqLanguageBar={params.mode === 'std'}
+                />
               </div>
 
               {/* 4) 소재·주제 선택 */}
@@ -1176,34 +892,37 @@ export const Step2Parameters: React.FC<Step2Props> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="space-y-5">
           {/* 문항 수 */}
-          <div className="lg:col-span-4 bg-slate-50 rounded-xl p-4 border border-slate-200/80">
-            <label className="block text-xs font-bold text-slate-700 mb-2">
-              자동 출제할 총 문항 수
-            </label>
-            <div className="flex items-center gap-3">
+          <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/80 flex flex-col lg:flex-row lg:items-center gap-4">
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700">
+                  자동 출제할 총 문항 수
+                </label>
+                <span className="px-2.5 py-0.5 rounded-lg bg-[#09396A] text-white text-xs font-extrabold">
+                  총 {params.itemCount}문항
+                </span>
+              </div>
               <input
                 type="range"
                 min={1}
                 max={10}
                 value={params.itemCount}
                 onChange={(e) => handleItemCountChange(Number(e.target.value))}
-                className="flex-1 accent-[#09396A]"
+                className="w-full accent-[#09396A]"
               />
-              <span className="w-16 text-center py-1.5 rounded-lg bg-[#09396A] text-white text-sm font-extrabold">
-                {params.itemCount}문항
-              </span>
             </div>
-            <div className="flex gap-1.5 mt-3">
-              {[1, 2, 4, 5, 8].map((n) => (
+
+            <div className="flex flex-wrap gap-1.5 lg:w-80 shrink-0">
+              {[1, 2, 3, 4, 5, 8, 10].map((n) => (
                 <button
                   key={n}
                   type="button"
                   onClick={() => handleItemCountChange(n)}
-                  className={`flex-1 py-1 rounded-lg text-xs font-bold border transition ${
+                  className={`flex-1 min-w-[44px] py-1.5 rounded-lg text-xs font-bold border transition ${
                     params.itemCount === n
-                      ? 'bg-[#EAF2FB] text-[#09396A] border-[#357DC7]'
+                      ? 'bg-[#09396A] text-white border-[#09396A]'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
@@ -1213,503 +932,13 @@ export const Step2Parameters: React.FC<Step2Props> = ({
             </div>
           </div>
 
-          {/* 문항 유형 / 형식 구성 */}
-          <div className="lg:col-span-8 space-y-3">
-            {params.mode === 'std' ? (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700">
-                      수능 영어 듣기 유형 배분 방식 ({params.itemCount}문항 연동 · 5지선다 객관식)
-                    </label>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      대학수학능력시험 영어 영역 듣기(1~17번) 공식 출제 유형 기준
-                    </p>
-                  </div>
-                  <div className="inline-flex rounded-xl bg-slate-100 p-1 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchStdTypeMode('auto')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        params.stdTypeMode !== 'counts'
-                          ? 'bg-[#09396A] text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      ✨ 자동 균형 배정
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchStdTypeMode('counts')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        params.stdTypeMode === 'counts'
-                          ? 'bg-[#09396A] text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      유형별 개수 지정 ({stdAllocated}/{params.itemCount})
-                    </button>
-                  </div>
-                </div>
-
-                {params.stdTypeMode !== 'counts' ? (
-                  <div className="space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[11px] text-slate-500">
-                        원하는 수능 듣기 유형을 클릭해 지정하세요. 미선택 시{' '}
-                        <b className="text-slate-700">총 {params.itemCount}문항</b>을 수능 출제 순서(1번→17번)에 맞춰 골고루 자동 배분합니다.
-                      </p>
-                      {params.selectedSkills.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => onChangeParams({ selectedSkills: [] })}
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-[#357DC7] hover:underline shrink-0"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          전체 자동 배정으로 ({params.selectedSkills.length}개 선택 해제)
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {STD_SKILLS.map((sk) => {
-                        const selected = params.selectedSkills.includes(sk.value);
-                        const optIsEn = isSkillEnglishOption(sk.value);
-                        return (
-                          <button
-                            key={sk.value}
-                            type="button"
-                            onClick={() =>
-                              onChangeParams({
-                                selectedSkills: toggleArrayItem(
-                                  params.selectedSkills,
-                                  sk.value
-                                ),
-                              })
-                            }
-                            className={`text-left p-2.5 rounded-xl border transition ${
-                              selected
-                                ? 'bg-[#F4F8FD] border-[#09396A] ring-1 ring-[#09396A]'
-                                : 'bg-white border-slate-200 hover:border-slate-300'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-1.5">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                {sk.csatNo && (
-                                  <span
-                                    className={`text-[10px] px-1.5 py-0.5 rounded font-extrabold shrink-0 ${
-                                      selected
-                                        ? 'bg-[#09396A] text-white'
-                                        : 'bg-slate-800 text-white'
-                                    }`}
-                                  >
-                                    {sk.csatNo}
-                                  </span>
-                                )}
-                                <span className="text-xs font-extrabold text-slate-900 truncate">
-                                  {sk.label || sk.value}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                {sk.csatPart === '간접 말하기' && (
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-indigo-50 text-indigo-700">
-                                    간접말하기
-                                  </span>
-                                )}
-                                <span
-                                  className={`text-[9px] px-1.5 py-0.5 rounded font-extrabold ${
-                                    optIsEn
-                                      ? 'bg-blue-100 text-[#09396A]'
-                                      : 'bg-slate-100 text-slate-600'
-                                  }`}
-                                >
-                                  {optIsEn ? 'EN보기' : 'KO보기'}
-                                </span>
-                              </div>
-                            </div>
-                            <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
-                              {sk.description}
-                            </p>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <p className="text-[11px] text-slate-400">
-                      ※ 수능 4번(그림 내용 일치)은 별도 삽화 이미지가 필요해 텍스트·음원 자동 출제 목록에서 제외되어 있습니다.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#F4F8FD] border border-blue-200/80 text-xs">
-                      <span className="font-bold text-[#09396A]">
-                        수능 유형 배정 현황: {stdAllocated} / {params.itemCount}문항
-                        {stdRemaining > 0 && (
-                          <span className="ml-2 font-normal text-slate-600">
-                            (미지정 {stdRemaining}문항은 수능 순서에 맞춰 자동 배정)
-                          </span>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onChangeParams({
-                              stdTypeCounts: buildRecommendedStdCounts(
-                                params.itemCount
-                              ),
-                            })
-                          }
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-[#357DC7] hover:underline"
-                        >
-                          <Wand2 className="w-3 h-3" />
-                          수능 추천 비율 채우기
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onChangeParams({ stdTypeCounts: {} })}
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          초기화
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {STD_SKILLS.map((sk) => {
-                        const cnt = Number(params.stdTypeCounts?.[sk.value] || 0);
-                        return (
-                          <div
-                            key={sk.value}
-                            className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 transition ${
-                              cnt > 0
-                                ? 'bg-[#F4F8FD] border-[#09396A]'
-                                : 'bg-white border-slate-200'
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                {sk.csatNo && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-extrabold bg-slate-800 text-white shrink-0">
-                                    {sk.csatNo}
-                                  </span>
-                                )}
-                                <span className="text-xs font-extrabold text-slate-900 truncate">
-                                  {sk.label || sk.value}
-                                </span>
-                              </div>
-                              <div className="text-[10px] text-slate-500 mt-0.5 truncate">
-                                {isSkillEnglishOption(sk.value) ? '영어·숫자 보기' : '한국어 보기'}
-                                {sk.csatPart === '간접 말하기' ? ' · 간접 말하기' : ''}
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleAdjustStdTypeCount(sk.value, -1)}
-                                disabled={cnt <= 0}
-                                className="w-7 h-7 rounded-lg border border-slate-300 bg-white flex items-center justify-center text-slate-700 hover:bg-slate-100 disabled:opacity-35"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
-                              <span
-                                className={`w-12 text-center text-xs font-extrabold ${
-                                  cnt > 0 ? 'text-[#09396A]' : 'text-slate-400'
-                                }`}
-                              >
-                                {cnt}문항
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleAdjustStdTypeCount(sk.value, 1)}
-                                disabled={stdAllocated >= params.itemCount}
-                                className="w-7 h-7 rounded-lg border border-slate-300 bg-white flex items-center justify-center text-slate-700 hover:bg-slate-100 disabled:opacity-35"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700">
-                      대구형(IB) 문항 유형 배분 방식 ({params.itemCount}문항 연동)
-                    </label>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      IB English B Paper 2 기출 및 대구형 IB 샘플(DELTA · 2026 현장지원단 자료집) 기준
-                    </p>
-                  </div>
-                  <div className="inline-flex rounded-xl bg-slate-100 p-1 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchFormatMode('auto')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        params.questionFormatMode !== 'counts'
-                          ? 'bg-[#09396A] text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      ✨ 자동 균형 배정
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchFormatMode('counts')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        params.questionFormatMode === 'counts'
-                          ? 'bg-[#09396A] text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      문항 수별 개수 지정 ({formatAllocated}/{params.itemCount})
-                    </button>
-                  </div>
-                </div>
-
-                {params.questionFormatMode !== 'counts' ? (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[11px] text-slate-500">
-                        출제에 활용할 대구형(IB) 문항 유형을 선택해 두시면, 총{' '}
-                        <b className="text-slate-700">{params.itemCount}문항</b>에 맞춰 AI가 골고루 배분합니다.
-                      </p>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onChangeParams({
-                              questionFormats: [
-                                'ib_mcq_3',
-                                'ib_multi_true',
-                                'ib_speaker_match',
-                                'gap_poster',
-                                'short_en',
-                              ],
-                            })
-                          }
-                          className="text-[11px] font-bold text-[#09396A] bg-[#EAF2FB] hover:bg-blue-100 px-2.5 py-1 rounded-lg transition"
-                        >
-                          IB Paper 2 핵심 5종
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onChangeParams({
-                              questionFormats: QUESTION_FORMATS.map((f) => f.id),
-                            })
-                          }
-                          className="text-[11px] font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition"
-                        >
-                          전체 선택
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 그룹 1: IB English B Paper 2 핵심 5유형 */}
-                    <div className="space-y-1.5">
-                      <div className="text-[11px] font-extrabold text-[#09396A] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#09396A]" />
-                        IB Paper 2 Listening 공식 핵심 유형 (5종)
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {QUESTION_FORMATS.filter((f) => f.group === 'ib_paper2').map((fmt) => {
-                          const selected = params.questionFormats.includes(fmt.id);
-                          return (
-                            <button
-                              key={fmt.id}
-                              type="button"
-                              onClick={() =>
-                                onChangeParams({
-                                  questionFormats: toggleArrayItem<QuestionFormatType>(
-                                    params.questionFormats,
-                                    fmt.id,
-                                    true
-                                  ),
-                                })
-                              }
-                              className={`text-left p-3 rounded-xl border transition ${
-                                selected
-                                  ? 'bg-[#F4F8FD] border-[#09396A] ring-1 ring-[#09396A]'
-                                  : 'bg-white border-slate-200 hover:border-slate-300'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-extrabold text-slate-900">
-                                  {fmt.label}
-                                </span>
-                                <span
-                                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
-                                    fmt.isConstructed
-                                      ? 'bg-amber-100 text-amber-800'
-                                      : 'bg-blue-100 text-blue-800'
-                                  }`}
-                                >
-                                  {fmt.pdfRef}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">
-                                {fmt.description}
-                              </p>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* 그룹 2: 대구형 확장 · 정기시험 병행 유형 */}
-                    <div className="space-y-1.5">
-                      <div className="text-[11px] font-extrabold text-slate-600 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                        대구형 IB 확장(DELTA 샘플) · 현장지원단 자료집 유형 (4종)
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {QUESTION_FORMATS.filter((f) => f.group !== 'ib_paper2').map((fmt) => {
-                          const selected = params.questionFormats.includes(fmt.id);
-                          return (
-                            <button
-                              key={fmt.id}
-                              type="button"
-                              onClick={() =>
-                                onChangeParams({
-                                  questionFormats: toggleArrayItem<QuestionFormatType>(
-                                    params.questionFormats,
-                                    fmt.id,
-                                    true
-                                  ),
-                                })
-                              }
-                              className={`text-left p-3 rounded-xl border transition ${
-                                selected
-                                  ? 'bg-[#F4F8FD] border-[#09396A] ring-1 ring-[#09396A]'
-                                  : 'bg-white border-slate-200 hover:border-slate-300'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-extrabold text-slate-900">
-                                  {fmt.label}
-                                </span>
-                                <span
-                                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
-                                    fmt.isConstructed
-                                      ? 'bg-amber-100 text-amber-800'
-                                      : 'bg-blue-100 text-blue-800'
-                                  }`}
-                                >
-                                  {fmt.pdfRef}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">
-                                {fmt.description}
-                              </p>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#F4F8FD] border border-blue-200/80 text-xs">
-                      <span className="font-bold text-[#09396A]">
-                        IB 문항 배정 현황: {formatAllocated} / {params.itemCount}문항
-                        {formatRemaining > 0 && (
-                          <span className="ml-2 font-normal text-slate-600">
-                            (미지정 {formatRemaining}문항은 선택된 IB 유형으로 자동 배정)
-                          </span>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onChangeParams({
-                              questionFormatCounts: buildRecommendedFormatCounts(
-                                params.itemCount
-                              ),
-                            })
-                          }
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-[#357DC7] hover:underline"
-                        >
-                          <Wand2 className="w-3 h-3" />
-                          IB 추천 비율 채우기
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onChangeParams({ questionFormatCounts: {} })
-                          }
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          초기화
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {QUESTION_FORMATS.map((fmt) => {
-                        const cnt = Number(
-                          params.questionFormatCounts?.[fmt.id] || 0
-                        );
-                        return (
-                          <div
-                            key={fmt.id}
-                            className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 transition ${
-                              cnt > 0
-                                ? 'bg-[#F4F8FD] border-[#09396A]'
-                                : 'bg-white border-slate-200'
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <div className="text-xs font-extrabold text-slate-900 truncate">
-                                {fmt.label}
-                              </div>
-                              <div className="text-[10px] text-slate-500 truncate">
-                                {fmt.pdfRef} · {fmt.shortBadge}
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleAdjustFormatCount(fmt.id, -1)}
-                                disabled={cnt <= 0}
-                                className="w-7 h-7 rounded-lg border border-slate-300 bg-white flex items-center justify-center text-slate-700 hover:bg-slate-100 disabled:opacity-35"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
-                              <span
-                                className={`w-12 text-center text-xs font-extrabold ${
-                                  cnt > 0 ? 'text-[#09396A]' : 'text-slate-400'
-                                }`}
-                              >
-                                {cnt}문항
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleAdjustFormatCount(fmt.id, 1)}
-                                disabled={formatAllocated >= params.itemCount}
-                                className="w-7 h-7 rounded-lg border border-slate-300 bg-white flex items-center justify-center text-slate-700 hover:bg-slate-100 disabled:opacity-35"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+          {/* 문항 유형 / 형식 배분 방식 (N문항 연동 · 대구형 IB 기출 / 기존형 수능 연계) */}
+          <div className="rounded-xl bg-slate-50/70 border border-slate-200/90 p-4">
+            <QuestionDistributionPanel
+              params={params}
+              onChangeParams={onChangeParams}
+              onClearPreset={() => setActivePresetId('')}
+            />
           </div>
         </div>
 
@@ -2819,7 +2048,7 @@ export const Step2Parameters: React.FC<Step2Props> = ({
                     ‘가. 평가 운영 및 적용 방안’ 표 포함
                   </div>
                   <div className="text-[11px] text-slate-500 mt-0.5">
-                    현장지원단 자료집 서식 상단의 운영 방법 · 기대효과 · 채점 유의사항 표를 원안지에 함께 포함합니다.
+                    교사용 문항 명세서 상단의 운영 방법 · 기대효과 · 채점 유의사항 표를 원안지에 함께 포함합니다.
                   </div>
                 </div>
               </label>
@@ -2846,7 +2075,47 @@ export const Step2Parameters: React.FC<Step2Props> = ({
       )}
 
       {/* 하단 액션 바 */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
+        {generateError && !generating && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span className="font-bold leading-relaxed break-words">
+                {generateError}
+              </span>
+            </div>
+            {onOpenApiKeyModal && /API 키|API_KEY|만료/i.test(generateError) && (
+              <button
+                type="button"
+                onClick={onOpenApiKeyModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-extrabold shrink-0 transition"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                API 키 설정 열기
+              </button>
+            )}
+          </div>
+        )}
+
+        {!hasApiKey && !generateError && !generating && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
+            <span className="font-semibold">
+              AI 자동 출제를 사용하려면 Gemini API 키가 필요합니다. (키 없이도 <b>직접 문항 출제 및 편집하기</b>로 바로 작성할 수 있습니다)
+            </span>
+            {onOpenApiKeyModal && (
+              <button
+                type="button"
+                onClick={onOpenApiKeyModal}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold shrink-0 transition"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                API 키 입력하기
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           {generating ? (
             <div className="flex items-center gap-2.5 text-sm font-bold text-[#09396A]">
@@ -2925,6 +2194,7 @@ export const Step2Parameters: React.FC<Step2Props> = ({
               ? 'AI 문항 자동 출제 중...'
               : `✨ AI 문항 자동 출제하기 (${params.itemCount}문항)`}
           </button>
+        </div>
         </div>
       </div>
     </div>

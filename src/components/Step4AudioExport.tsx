@@ -682,7 +682,7 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                  현장지원단 자료집 서식
+                  교사용 문항 명세 서식
                 </span>
                 <FileText className="w-5 h-5 text-emerald-700" />
               </div>
@@ -690,7 +690,7 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
                 교사용 문항 명세 · 채점기준서 (.hwpx)
               </h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                자료집 예시 서식(가. 운영 방안 + 나. 문항 명세표 + 성취기준·수행지시어·어휘 수 + 듣기 대본 + 4열 세부 채점기준표) 전체 수록
+                표준 문항 명세 서식(가. 운영 방안 + 나. 문항 명세표 + 성취기준·수행지시어·어휘 수 + 듣기 대본 + 4열 세부 채점기준표) 전체 수록
               </p>
             </div>
             <button

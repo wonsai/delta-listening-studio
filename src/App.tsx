@@ -13,7 +13,7 @@ import {
   getDefaultEnglishOptionSkills,
   getListeningPrimaryStandardsForSubject,
 } from './data/taxonomy';
-import { DEFAULT_OPERATION_GUIDE, SAMPLE_ITEMS } from './data/sampleItems';
+import { DEFAULT_OPERATION_GUIDE } from './data/sampleItems';
 import {
   auditAndFixListeningItem,
   generateListeningItems,
@@ -30,19 +30,6 @@ import { Step1TypeGrade } from './components/Step1TypeGrade';
 import { Step2Parameters } from './components/Step2Parameters';
 import { Step3Editor } from './components/Step3Editor';
 import { Step4AudioExport } from './components/Step4AudioExport';
-
-function cloneSampleItems(): ListeningItem[] {
-  return SAMPLE_ITEMS.map((it, idx) => ({
-    ...it,
-    id: `sample-${Date.now()}-${idx + 1}`,
-    itemNo: idx + 1,
-    operationGuide: { ...it.operationGuide },
-    expressions: [...it.expressions],
-    structures: [...it.structures],
-    options: [...it.options],
-    rubricRows: it.rubricRows.map((r) => ({ ...r })),
-  }));
-}
 
 function renumberItems(list: ListeningItem[]): ListeningItem[] {
   return list.map((it, idx) => ({
@@ -72,16 +59,17 @@ const INITIAL_PARAMS: GenerationParams = {
   questionFormatMode: 'auto',
   questionFormats: [
     'ib_mcq_3',
-    'ib_multi_true',
-    'ib_speaker_match',
     'gap_poster',
+    'ib_multi_true',
     'short_en',
+    'ib_speaker_match',
+    'ib_match_info',
   ],
   questionFormatCounts: {
     ib_mcq_3: 1,
     gap_poster: 1,
     ib_multi_true: 1,
-    short_en: 1,
+    ib_speaker_match: 1,
   },
   stdTypeMode: 'auto',
   stdTypeCounts: {
@@ -132,6 +120,8 @@ export const App: React.FC = () => {
 
   const [generating, setGenerating] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [apiKeyModalSignal, setApiKeyModalSignal] = useState<number>(0);
   const [refiningId, setRefiningId] = useState<string | null>(null);
   const [auditingAll, setAuditingAll] = useState<boolean>(false);
   const [auditProgressText, setAuditProgressText] = useState<string>('');
@@ -177,6 +167,7 @@ export const App: React.FC = () => {
     saveApiKey(key);
     setApiKey(key);
     if (key.trim()) {
+      setGenerateError(null);
       setTtsConfig((prev) => ({ ...prev, engine: 'gemini' }));
       showNotice('success', 'Gemini API 키가 브라우저에 안전하게 저장되었습니다.');
     } else {
@@ -186,6 +177,7 @@ export const App: React.FC = () => {
   };
 
   const handleChangeParams = (patch: Partial<GenerationParams>) => {
+    setGenerateError(null);
     setParams((prev) => ({ ...prev, ...patch }));
   };
 
@@ -195,15 +187,16 @@ export const App: React.FC = () => {
 
   const handleGenerate = async () => {
     if (!apiKey.trim()) {
-      showNotice(
-        'error',
-        'AI 자동 출제를 위해 우측 상단 [API 키 설정] 버튼에서 Gemini API 키를 먼저 입력해 주세요. (API 키 없이도 [직접 문항 출제 및 편집하기]로 바로 작성·출력할 수 있습니다)',
-        7000
-      );
+      const msg =
+        'AI 자동 출제를 위해 Gemini API 키를 먼저 입력해 주세요. (API 키 없이도 [직접 문항 출제 및 편집하기]로 바로 작성·출력할 수 있습니다)';
+      setGenerateError(msg);
+      showNotice('error', msg, 7000);
+      setApiKeyModalSignal((s) => s + 1);
       return;
     }
 
     setGenerating(true);
+    setGenerateError(null);
     setStatusMessage('대구형 교육과정 성취기준 및 어휘 수준 분석 중...');
     setToast(null);
 
@@ -236,11 +229,10 @@ export const App: React.FC = () => {
         );
       }
     } catch (err) {
-      showNotice(
-        'error',
-        err instanceof Error ? err.message : 'AI 문항 생성 중 오류가 발생했습니다.',
-        8000
-      );
+      const errMsg =
+        err instanceof Error ? err.message : 'AI 문항 생성 중 오류가 발생했습니다.';
+      setGenerateError(errMsg);
+      showNotice('error', errMsg, 10000);
     } finally {
       setGenerating(false);
       setStatusMessage('');
@@ -579,18 +571,6 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleLoadSamples = () => {
-    revokeItemAudioUrls(items);
-    setParams(INITIAL_PARAMS);
-    setItems(cloneSampleItems());
-    setActiveIndex(0);
-    setCurrentStep(3);
-    showNotice(
-      'info',
-      '2026 대구 중등 영어듣기 현장지원단 자료집의 표준 예시 4문항을 불러왔습니다.'
-    );
-  };
-
   const handleExportJson = () => {
     if (items.length === 0) {
       showNotice('info', '저장할 문항이 없습니다. 먼저 문항을 출제하거나 작성해 주세요.');
@@ -654,20 +634,20 @@ export const App: React.FC = () => {
         itemCount={items.length}
         apiKey={apiKey}
         onSaveApiKey={handleSaveApiKey}
-        onLoadSamples={handleLoadSamples}
+        openApiKeyModalSignal={apiKeyModalSignal}
         onExportJson={handleExportJson}
         onImportJson={handleImportJson}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-5">
-        {toast && (
+      {toast && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 w-[min(92vw,44rem)] print:hidden">
           <div
-            className={`rounded-xl border px-4 py-3 flex items-start justify-between gap-3 text-sm shadow-sm ${
+            className={`rounded-xl border px-4 py-3 flex items-start justify-between gap-3 text-sm shadow-xl ${
               toast.type === 'error'
-                ? 'bg-red-50 border-red-200 text-red-800'
+                ? 'bg-red-50 border-red-300 text-red-800'
                 : toast.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : 'bg-blue-50 border-blue-200 text-[#09396A]'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                : 'bg-blue-50 border-blue-300 text-[#09396A]'
             }`}
           >
             <div className="flex items-start gap-2.5">
@@ -688,8 +668,10 @@ export const App: React.FC = () => {
               <X className="w-4 h-4" />
             </button>
           </div>
-        )}
+        </div>
+      )}
 
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-5">
         {currentStep === 1 && (
           <Step1TypeGrade
             params={params}
@@ -707,6 +689,9 @@ export const App: React.FC = () => {
             onSkipToEditor={handleDirectCreateOrEdit}
             generating={generating}
             statusMessage={statusMessage}
+            generateError={generateError}
+            hasApiKey={Boolean(apiKey.trim())}
+            onOpenApiKeyModal={() => setApiKeyModalSignal((s) => s + 1)}
           />
         )}
 

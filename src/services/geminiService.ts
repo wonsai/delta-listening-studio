@@ -7,7 +7,6 @@ import {
   VocabLevelId,
 } from '../types/assessment';
 import {
-  AchievementStandardItem,
   DIRECTIVES,
   IB_SKILLS,
   QUESTION_FORMATS,
@@ -29,6 +28,7 @@ import {
   buildAutoFixPromptFromReport,
   validateListeningItem,
 } from './itemValidator';
+import { buildItemSlotPlan } from './slotPlanner';
 import { countTranscriptWords } from './wordUtils';
 
 const STORAGE_KEY = 'delta_authoring_gemini_key';
@@ -55,6 +55,162 @@ export function saveApiKey(key: string): void {
 
 export const FIXED_GEMINI_MODEL = 'gemini-3.8-flash';
 
+const GEMINI_MODEL_CANDIDATES = [
+  'gemini-3.8-flash',
+  'gemini-3-flash',
+  'gemini-2.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-2.0-flash',
+];
+
+function parseGeminiJsonText(rawText: string): unknown {
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+    }
+    throw new Error(
+      'AI 응답 JSON 형식이 완전하지 않습니다. 문항 수를 줄이거나 잠시 후 다시 시도해 주세요.'
+    );
+  }
+}
+
+async function callSingleGeminiModel(
+  apiKey: string,
+  model: string,
+  systemInstruction: string,
+  userPrompt: string,
+  responseSchema: Record<string, unknown>,
+  useThinking: boolean
+): Promise<
+  | { ok: true; data: unknown }
+  | { ok: false; status: number; detail: string; isInvalidKey?: boolean; isTruncated?: boolean }
+> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model
+  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const generationConfig: Record<string, unknown> = {
+    responseMimeType: 'application/json',
+    responseSchema,
+    maxOutputTokens: 16384,
+  };
+  if (useThinking && /gemini-(?:3|4|2\.5)/.test(model)) {
+    generationConfig.thinkingConfig = {
+      thinkingLevel: 'MEDIUM',
+    };
+  }
+
+  const body = {
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: userPrompt }],
+      },
+    ],
+    generationConfig,
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return {
+        ok: false,
+        status: 408,
+        detail: '요청 시간이 초과되었습니다(90초). 네트워크 상태를 확인하거나 문항 수를 줄여 시도해 주세요.',
+      };
+    }
+    return {
+      ok: false,
+      status: 0,
+      detail: err instanceof Error ? err.message : '네트워크 연결에 실패했습니다.',
+    };
+  }
+  clearTimeout(timeoutId);
+
+  if (res.ok) {
+    const json = await res.json();
+    const candidate = json?.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    const parts: Array<{ text?: string; thought?: boolean }> =
+      candidate?.content?.parts || [];
+    const rawText = parts
+      .filter((p) => !p.thought && typeof p.text === 'string')
+      .map((p) => p.text || '')
+      .join('');
+
+    if (!rawText.trim()) {
+      return {
+        ok: false,
+        status: 500,
+        detail:
+          finishReason && finishReason !== 'STOP'
+            ? `AI 응답이 중단되었습니다 (사유: ${finishReason}).`
+            : 'AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.',
+      };
+    }
+
+    try {
+      const parsed = parseGeminiJsonText(rawText);
+      return { ok: true, data: parsed };
+    } catch (parseErr) {
+      return {
+        ok: false,
+        status: 500,
+        isTruncated: finishReason === 'MAX_TOKENS',
+        detail:
+          finishReason === 'MAX_TOKENS'
+            ? '생성 분량이 길어 응답이 중간에 잘렸습니다. 출제 문항 수를 줄여(예: 2~4문항) 다시 시도해 주세요.'
+            : parseErr instanceof Error
+            ? parseErr.message
+            : 'AI 응답을 해석하지 못했습니다.',
+      };
+    }
+  }
+
+  let errDetail = `HTTP ${res.status}`;
+  try {
+    const errJson = await res.json();
+    errDetail = errJson?.error?.message || errDetail;
+  } catch {
+    // ignore JSON parse error on error body
+  }
+
+  const isInvalidKey =
+    (res.status === 400 || res.status === 403) &&
+    /API key not valid|API_KEY_INVALID|API key expired|PERMISSION_DENIED/i.test(errDetail);
+
+  return {
+    ok: false,
+    status: res.status,
+    detail: errDetail,
+    isInvalidKey,
+  };
+}
+
 async function callGeminiJson(
   apiKey: string,
   systemInstruction: string,
@@ -67,101 +223,110 @@ async function callGeminiJson(
     throw new Error('Gemini API 키가 입력되지 않았습니다. 우측 상단 [API 키 설정]에서 키를 입력해 주세요.');
   }
 
-  onStatus?.(`AI 출제 엔진(${FIXED_GEMINI_MODEL})에서 문항을 설계하고 있습니다...`);
+  const errors: string[] = [];
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    FIXED_GEMINI_MODEL
-  )}:generateContent?key=${encodeURIComponent(key)}`;
+  for (let i = 0; i < GEMINI_MODEL_CANDIDATES.length; i++) {
+    const model = GEMINI_MODEL_CANDIDATES[i];
+    onStatus?.(
+      i === 0
+        ? `AI 출제 엔진(${model})에서 문항을 설계하고 있습니다...`
+        : `대체 출제 엔진(${model})으로 자동 전환하여 문항을 설계하고 있습니다...`
+    );
 
-  const body = {
-    systemInstruction: {
-      parts: [{ text: systemInstruction }],
-    },
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: userPrompt }],
-      },
-    ],
-    generationConfig: {
-      responseMimeType: 'application/json',
+    let attempt = await callSingleGeminiModel(
+      key,
+      model,
+      systemInstruction,
+      userPrompt,
       responseSchema,
-      thinkingConfig: {
-        thinkingLevel: 'MEDIUM',
-      },
-    },
-  };
+      true
+    );
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (res.ok) {
-    const json = await res.json();
-    const parts: Array<{ text?: string; thought?: boolean }> =
-      json?.candidates?.[0]?.content?.parts || [];
-    const rawText = parts
-      .filter((p) => !p.thought && typeof p.text === 'string')
-      .map((p) => p.text || '')
-      .join('');
-
-    if (!rawText.trim()) {
-      throw new Error('AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.');
+    // thinkingConfig / thinkingLevel 미지원 400 오류 시 thinkingConfig 제외 후 동일 모델 즉시 재시도
+    if (
+      !attempt.ok &&
+      attempt.status === 400 &&
+      !attempt.isInvalidKey &&
+      /thinking|budget|level|unknown name/i.test(attempt.detail)
+    ) {
+      attempt = await callSingleGeminiModel(
+        key,
+        model,
+        systemInstruction,
+        userPrompt,
+        responseSchema,
+        false
+      );
     }
 
-    const cleaned = rawText
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '');
-    return JSON.parse(cleaned);
+    if (attempt.ok) {
+      return attempt.data;
+    }
+
+    if (attempt.isInvalidKey) {
+      throw new Error(
+        '유효하지 않거나 만료된 Gemini API 키입니다. 우측 상단 [API 키 설정]에서 키를 다시 확인해 주세요.'
+      );
+    }
+
+    if (attempt.isTruncated) {
+      throw new Error(attempt.detail);
+    }
+
+    errors.push(`${model}: ${attempt.detail}`);
+
+    // 404(모델 미지원), 429(한도 초과), 503(과부하), 400(모델 설정 호환성) 시 다음 모델로 자동 폴백
+    const canFallback =
+      attempt.status === 404 ||
+      attempt.status === 429 ||
+      attempt.status === 503 ||
+      attempt.status === 400 ||
+      attempt.status === 500;
+
+    if (!canFallback) {
+      throw new Error(`Gemini API 호출에 실패했습니다 [${model}]: ${attempt.detail}`);
+    }
   }
 
-  let errDetail = `HTTP ${res.status}`;
-  try {
-    const errJson = await res.json();
-    errDetail = errJson?.error?.message || errDetail;
-  } catch {
-    // ignore JSON parse error on error body
-  }
-
-  if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(errDetail)) {
-    throw new Error('유효하지 않은 Gemini API 키입니다. 우측 상단 [API 키 설정]에서 키를 다시 확인해 주세요.');
-  }
-  if (res.status === 429) {
+  const lastError = errors[errors.length - 1] || '알 수 없는 오류';
+  if (/429|quota|RESOURCE_EXHAUSTED/i.test(errors.join(' '))) {
     throw new Error(
-      `Gemini API 요청 한도(Quota)를 초과했습니다. 잠시 후 다시 시도해 주세요. (${FIXED_GEMINI_MODEL}: ${errDetail})`
+      `Gemini API 요청 한도(Quota)를 초과했습니다. 잠시 후 다시 시도해 주세요. (${lastError})`
     );
   }
-  if (res.status === 503) {
-    throw new Error(
-      `현재 Gemini 서버 요청이 일시적으로 집중되고 있습니다. 몇 초 후 다시 시도해 주세요. (${FIXED_GEMINI_MODEL})`
-    );
-  }
-
-  throw new Error(`Gemini API 호출에 실패했습니다 [${FIXED_GEMINI_MODEL}]: ${errDetail}`);
+  throw new Error(`Gemini API 호출에 실패했습니다: ${lastError}`);
 }
 
 export async function testGeminiApiKey(apiKey: string): Promise<{ ok: boolean; message: string }> {
   const key = apiKey.trim();
   if (!key) return { ok: false, message: 'API 키를 입력해 주세요.' };
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        FIXED_GEMINI_MODEL
-      )}?key=${encodeURIComponent(key)}`
-    );
-    if (!res.ok) {
+    let lastErr = '';
+    for (const model of GEMINI_MODEL_CANDIDATES) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          model
+        )}?key=${encodeURIComponent(key)}`
+      );
+      if (res.ok) {
+        return {
+          ok: true,
+          message: `정상 연결됨 (출제 모델: ${model} 준비 완료)`,
+        };
+      }
       const err = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        message: err?.error?.message || `연결 실패 (HTTP ${res.status})`,
-      };
+      const msg = err?.error?.message || `HTTP ${res.status}`;
+      if (res.status === 400 || res.status === 403) {
+        return {
+          ok: false,
+          message: msg,
+        };
+      }
+      lastErr = `${model}: ${msg}`;
     }
     return {
-      ok: true,
-      message: `정상 연결됨 (고정 출제 모델: ${FIXED_GEMINI_MODEL} 준비 완료)`,
+      ok: false,
+      message: lastErr || '사용 가능한 Gemini 출제 모델을 찾지 못했습니다.',
     };
   } catch (e) {
     return {
@@ -176,7 +341,7 @@ const ITEM_SCHEMA = {
   properties: {
     questionFormat: {
       type: 'STRING',
-      description: 'ib_mcq_3 | ib_multi_true | ib_speaker_match | gap_poster | short_en | tf_justify | ib_order | short_kr | mcq_5 중 하나',
+      description: 'ib_mcq_3 | gap_poster | ib_multi_true | short_en | ib_speaker_match | ib_match_info | tf_justify | ib_order | short_kr | mcq_5 중 하나',
     },
     operationMethod: { type: 'STRING' },
     operationBenefits: { type: 'STRING' },
@@ -326,10 +491,11 @@ function normalizeGeneratedItem(
   const rawFmt = String(raw.questionFormat || '') as QuestionFormatType;
   const validFormats: QuestionFormatType[] = [
     'ib_mcq_3',
-    'ib_multi_true',
-    'ib_speaker_match',
     'gap_poster',
+    'ib_multi_true',
     'short_en',
+    'ib_speaker_match',
+    'ib_match_info',
     'tf_justify',
     'ib_order',
     'short_kr',
@@ -435,345 +601,6 @@ function normalizeGeneratedItem(
   };
 }
 
-interface ItemSlotSpec {
-  itemNo: number;
-  format: QuestionFormatType;
-  standardText: string;
-  skill: string;
-  directive: string;
-  textType: string;
-  mcqOptionLang: 'en' | 'ko';
-  mcqOptionStyleHint: string;
-  mcqPromptLang: 'ko' | 'en';
-}
-
-function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
-  const count = Math.max(1, params.itemCount);
-  const allSubjectStandards = getAchievementStandardsForSubject(params.subject);
-  const primarySubjectStandards = getListeningPrimaryStandardsForSubject(
-    params.subject
-  );
-  const activeStandards: AchievementStandardItem[] =
-    params.selectedStandards.length > 0
-      ? allSubjectStandards.filter((s) =>
-          params.selectedStandards.includes(s.text)
-        )
-      : primarySubjectStandards;
-  const fallbackStandards =
-    activeStandards.length > 0 ? activeStandards : primarySubjectStandards;
-
-  // 1) 문항 형식 슬롯 배열 구성
-  const formatSlots: QuestionFormatType[] = [];
-  if (params.mode === 'std') {
-    for (let i = 0; i < count; i++) formatSlots.push('mcq_5');
-  } else if (params.questionFormatMode === 'counts' && params.questionFormatCounts) {
-    for (const fmtMeta of QUESTION_FORMATS) {
-      const n = Number(params.questionFormatCounts[fmtMeta.id] || 0);
-      for (let k = 0; k < n && formatSlots.length < count; k++) {
-        formatSlots.push(fmtMeta.id);
-      }
-    }
-    const fallbackPool: QuestionFormatType[] =
-      params.questionFormats.length > 0
-        ? params.questionFormats
-        : ['ib_mcq_3', 'gap_poster', 'short_en', 'ib_multi_true', 'ib_speaker_match'];
-    let fIdx = 0;
-    while (formatSlots.length < count) {
-      formatSlots.push(fallbackPool[fIdx % fallbackPool.length]);
-      fIdx++;
-    }
-  } else {
-    const pool: QuestionFormatType[] =
-      params.questionFormats.length > 0
-        ? params.questionFormats
-        : ['ib_mcq_3', 'gap_poster', 'short_en', 'ib_multi_true', 'ib_speaker_match'];
-    for (let i = 0; i < count; i++) {
-      formatSlots.push(pool[i % pool.length]);
-    }
-  }
-
-  // 정기고사/IB 원안 표준 순서(선택형 → 복수선택/매칭 → 빈칸·단답 → 순서·서술형)에 맞춰 슬롯 정렬
-  const formatPriority: Record<QuestionFormatType, number> = {
-    mcq_5: 0,
-    ib_mcq_3: 1,
-    ib_multi_true: 2,
-    ib_speaker_match: 3,
-    gap_poster: 4,
-    short_en: 5,
-    ib_order: 6,
-    tf_justify: 7,
-    short_kr: 8,
-  };
-  formatSlots.sort((a, b) => formatPriority[a] - formatPriority[b]);
-
-  // 2) 성취기준 및 평가기능(skill) · 수행지시어 매칭
-  const allModeSkills = params.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
-  const csatOrderMap = new Map(STD_SKILLS.map((sk, idx) => [sk.value, idx]));
-  const usedAutoSkills = new Set<string>();
-
-  // 기존형(수능 영어 듣기)일 때 유형별 개수 지정 또는 수능 1~17번 공식 순서 정렬 지원
-  let stdPlannedSkills: string[] | null = null;
-  if (params.mode === 'std') {
-    if (params.stdTypeMode === 'counts' && params.stdTypeCounts) {
-      const expanded: string[] = [];
-      for (const sk of STD_SKILLS) {
-        const n = Number(params.stdTypeCounts[sk.value] || 0);
-        for (let k = 0; k < n && expanded.length < count; k++) {
-          expanded.push(sk.value);
-        }
-      }
-      if (expanded.length > 0) {
-        const fallbackPool =
-          params.selectedSkills.length > 0
-            ? params.selectedSkills
-            : STD_SKILLS.map((s) => s.value);
-        let pIdx = 0;
-        while (expanded.length < count) {
-          expanded.push(fallbackPool[pIdx % fallbackPool.length]);
-          pIdx++;
-        }
-        expanded.sort(
-          (a, b) => (csatOrderMap.get(a) ?? 99) - (csatOrderMap.get(b) ?? 99)
-        );
-        stdPlannedSkills = expanded;
-      }
-    } else if (params.selectedSkills.length > 0) {
-      const sortedSelected = [...params.selectedSkills].sort(
-        (a, b) => (csatOrderMap.get(a) ?? 99) - (csatOrderMap.get(b) ?? 99)
-      );
-      stdPlannedSkills = Array.from(
-        { length: count },
-        (_, i) => sortedSelected[i % sortedSelected.length]
-      );
-    }
-  }
-
-  let preliminarySlots = Array.from({ length: count }, (_, i) => {
-    let stdItem = fallbackStandards[i % fallbackStandards.length];
-    let skill: string;
-
-    if (params.mode === 'std' && stdPlannedSkills) {
-      skill = stdPlannedSkills[i];
-      // 교사가 성취기준을 직접 고정하지 않은 경우, 해당 수능 유형과 가장 잘 맞는 성취기준을 우선 매칭
-      const matchedStd =
-        fallbackStandards.find((s) => s.recommendedSkillStd === skill) ||
-        fallbackStandards.find(
-          (s) =>
-            s.directive ===
-            (STD_SKILLS.find((sk) => sk.value === skill)?.directive || '')
-        );
-      if (matchedStd) stdItem = matchedStd;
-    } else if (params.selectedSkills.length > 0) {
-      skill = params.selectedSkills[i % params.selectedSkills.length];
-    } else {
-      // 자동 배정: 해당 문항 성취기준에 직결되는 추천 기능을 우선 배정하되, 다문항 시 중복 최소화
-      const primaryRec =
-        params.mode === 'ib'
-          ? stdItem?.recommendedSkillIb || '세부 정보 파악'
-          : stdItem?.recommendedSkillStd || '목적';
-
-      if (!usedAutoSkills.has(primaryRec)) {
-        skill = primaryRec;
-      } else {
-        const sameDirAlt = allModeSkills.find(
-          (sk) =>
-            !usedAutoSkills.has(sk.value) &&
-            sk.directive === (stdItem?.directive || '파악')
-        );
-        const anyAlt = allModeSkills.find((sk) => !usedAutoSkills.has(sk.value));
-        skill = sameDirAlt?.value || anyAlt?.value || primaryRec;
-      }
-      usedAutoSkills.add(skill);
-    }
-
-    const standardText =
-      stdItem?.text ||
-      params.selectedStandards[i % Math.max(1, params.selectedStandards.length)] ||
-      '';
-
-    const matchedSkillMeta = allModeSkills.find((s) => s.value === skill);
-    const directive =
-      params.selectedDirective ||
-      matchedSkillMeta?.directive ||
-      stdItem?.directive ||
-      '파악';
-
-    return {
-      format: formatSlots[i],
-      standardText,
-      skill,
-      matchedSkillMeta,
-      directive,
-    };
-  });
-
-  // 기존형(수능) 자동 배정 시에도 1번(목적) → 16~17번(복합) 수능 공식 순서로 정렬
-  if (params.mode === 'std') {
-    preliminarySlots = preliminarySlots.sort(
-      (a, b) =>
-        (csatOrderMap.get(a.skill) ?? 99) - (csatOrderMap.get(b.skill) ?? 99)
-    );
-  }
-
-  // 3) 담화·대화 유형 슬롯 배열 구성 (문항 수 및 문항 유형 특성 연동)
-  const autoTextCycle = [
-    '대화문',
-    '담화문(안내 방송)',
-    '대화문',
-    '담화문(음성 메시지)',
-    '대화문',
-    '담화문(강연·발표)',
-    '인터뷰',
-    '토론·의견 교환',
-  ];
-
-  const dialogueRequiredSkills = new Set([
-    '짧은응답',
-    '긴응답',
-    '듣고 응답하기',
-    '의견',
-    '할일',
-    '숫자',
-    '이유',
-    '언급안됨',
-    '도표',
-  ]);
-  const monologuePreferredSkills = new Set([
-    '목적',
-    '요지',
-    '내용일치',
-    '복합(주제+언급안됨)',
-  ]);
-
-  const textSlots: string[] = new Array(count).fill('');
-  if (params.textTypeMode === 'counts' && params.textTypeCounts) {
-    const remainingCounts: Record<string, number> = { ...params.textTypeCounts };
-
-    // 포스터 빈칸 완성형(gap_poster) / 화자 매칭형(ib_speaker_match) / 대화 필수 수능 유형 우선 매칭
-    for (let i = 0; i < count; i++) {
-      const fmt = preliminarySlots[i].format;
-      if (fmt === 'gap_poster') {
-        if ((remainingCounts['담화문(안내 방송)'] || 0) > 0) {
-          textSlots[i] = '담화문(안내 방송)';
-          remainingCounts['담화문(안내 방송)']--;
-        } else if ((remainingCounts['담화문(강연·발표)'] || 0) > 0) {
-          textSlots[i] = '담화문(강연·발표)';
-          remainingCounts['담화문(강연·발표)']--;
-        }
-      } else if (fmt === 'ib_speaker_match') {
-        if ((remainingCounts['토론·의견 교환'] || 0) > 0) {
-          textSlots[i] = '토론·의견 교환';
-          remainingCounts['토론·의견 교환']--;
-        } else if ((remainingCounts['인터뷰'] || 0) > 0) {
-          textSlots[i] = '인터뷰';
-          remainingCounts['인터뷰']--;
-        } else if ((remainingCounts['대화문'] || 0) > 0) {
-          textSlots[i] = '대화문';
-          remainingCounts['대화문']--;
-        }
-      } else if (
-        dialogueRequiredSkills.has(preliminarySlots[i].skill) &&
-        (remainingCounts['대화문'] || 0) > 0
-      ) {
-        textSlots[i] = '대화문';
-        remainingCounts['대화문']--;
-      }
-    }
-
-    const flatRest: string[] = [];
-    for (const tt of TEXT_TYPES) {
-      const c = Number(remainingCounts[tt.id] || 0);
-      for (let k = 0; k < c; k++) flatRest.push(tt.id);
-    }
-
-    let rIdx = 0;
-    let autoIdx = 0;
-    for (let i = 0; i < count; i++) {
-      if (!textSlots[i]) {
-        if (rIdx < flatRest.length) {
-          textSlots[i] = flatRest[rIdx++];
-        } else {
-          textSlots[i] = autoTextCycle[autoIdx++ % autoTextCycle.length];
-        }
-      }
-    }
-  } else {
-    // 자동 균형 배정: 문항 형식·평가 기능 특성과 인덱스에 맞춰 대화문·담화문이 어색하지 않게 배정
-    let autoIdx = 0;
-    for (let i = 0; i < count; i++) {
-      const fmt = preliminarySlots[i].format;
-      const sk = preliminarySlots[i].skill;
-      if (sk === '상황') {
-        textSlots[i] = '담화문(상황 설명)';
-      } else if (fmt === 'ib_speaker_match') {
-        textSlots[i] = i % 2 === 0 ? '토론·의견 교환' : '인터뷰';
-      } else if (dialogueRequiredSkills.has(sk)) {
-        textSlots[i] = '대화문';
-      } else if (sk === '복합(주제+언급안됨)') {
-        textSlots[i] = '담화문(강연·발표)';
-      } else if (fmt === 'gap_poster' || monologuePreferredSkills.has(sk)) {
-        textSlots[i] = i % 2 === 0 ? '담화문(안내 방송)' : '담화문(강연·발표)';
-      } else if (fmt === 'short_kr' && i % 2 === 1) {
-        textSlots[i] = '담화문(음성 메시지)';
-      } else {
-        let candidate = autoTextCycle[autoIdx++ % autoTextCycle.length];
-        if (i > 0 && candidate === textSlots[i - 1] && count > 1) {
-          candidate = autoTextCycle[autoIdx++ % autoTextCycle.length];
-        }
-        textSlots[i] = candidate;
-      }
-    }
-  }
-
-  // 4) 객관식 보기(①~⑤ 또는 IB A/B/C) 언어 및 발문 언어 결정
-  const optionMode = params.mcqOptionLanguage || 'auto';
-  const promptMode = params.mcqPromptLanguage || 'ko';
-  const englishSkillSet = new Set(
-    params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
-  );
-
-  return preliminarySlots.map((p, i) => {
-    const isIb3 = p.format === 'ib_mcq_3';
-    const mcqOptionLang: 'en' | 'ko' = isIb3
-      ? optionMode === 'ko'
-        ? 'ko'
-        : 'en'
-      : optionMode === 'en'
-      ? 'en'
-      : optionMode === 'ko'
-      ? 'ko'
-      : p.matchedSkillMeta
-      ? englishSkillSet.has(p.matchedSkillMeta.value)
-        ? 'en'
-        : 'ko'
-      : 'ko';
-
-    const mcqOptionStyleHint = isIb3
-      ? mcqOptionLang === 'en'
-        ? 'IB Paper 2 표준 A/B/C 3지선다 영어 선택지 3개 (문장 완성형 또는 간결한 구/절, 병렬 구조 엄수)'
-        : 'IB 3지선다 한국어 선택지 3개 (문장 구조와 길이가 균일한 병렬 구조)'
-      : p.matchedSkillMeta
-      ? mcqOptionLang === 'en'
-        ? p.matchedSkillMeta.optionStyleHintEn
-        : p.matchedSkillMeta.optionStyleHintKo
-      : mcqOptionLang === 'en'
-      ? '문법 구조와 길이가 균일한 자연스러운 영어(English) 선택지 5개'
-      : '어미와 수준이 균일한 자연스러운 한국어 선택지 5개';
-
-    return {
-      itemNo: i + 1,
-      format: p.format,
-      standardText: p.standardText,
-      skill: p.skill,
-      directive: p.directive,
-      textType: textSlots[i],
-      mcqOptionLang,
-      mcqOptionStyleHint,
-      mcqPromptLang: isIb3 && promptMode === 'en' ? 'en' : promptMode,
-    };
-  });
-}
-
 export async function generateListeningItems(
   apiKey: string,
   params: GenerationParams,
@@ -872,7 +699,7 @@ export async function generateListeningItems(
   );
   const referenceBlock = formatReferenceExamplesForPrompt(selectedRefs);
 
-  const systemInstruction = `당신은 대한민국 대구광역시교육청 '중등 영어듣기 현장지원단' 및 'DELTA(대구형 영어듣기 교수·평가 플랫폼)' 수석 출제위원이자, 원어민 영어듣기 대본 감수자입니다.
+  const systemInstruction = `당신은 대한민국 대구광역시교육청 'DELTA(대구형 영어듣기 교수·평가 플랫폼)' 수석 출제위원이자, IB DP English B Paper 2 · 대학수학능력시험 영어 듣기 출제 전문가 및 원어민 영어듣기 대본 감수자입니다.
 교사가 설정한 평가 유형, 학년/과목, 성취기준, 수행지시어, 소재, 어휘 수준 및 목표 어휘 수에 맞추어 학교 정기고사 및 수행평가에 즉시 투입할 수 있는 최고 품질의 영어듣기 평가 문항 원안을 출제합니다.
 
 [절대 준수 원칙 A · 원어민 자연 구어체(Natural Spoken English) & 직역 금지]
@@ -891,7 +718,7 @@ export async function generateListeningItems(
 - 따라서 학생이 보게 되는 **발문(questionPrompt), 안내문/포스터(stimulusTitle·stimulusBody), 선택지(options)** 어디에도 읽기 평가 표현을 절대 쓰지 마세요:
   * ❌ 절대 금지 표현: "대본을 보고", "대본에서 찾아 쓰시오", "대본의 내용을 참고하여", "지문을 보고/읽고", "지문에서 찾아", "윗글", "다음 글을 읽고", "본문에서", "밑줄 친", "그대로 옮겨 쓰시오", "Read the transcript/script/dialogue/passage", "Find in the script"
   * ✅ 올바른 표현: "대화를 듣고, ...", "다음 안내 방송을 듣고, ...", "다음 음성 메시지를 듣고, ...", "들은 내용을 바탕으로 ...", "Listen to the dialogue/announcement and ..."
-- 서답형 문항(ib_multi_true, ib_speaker_match, gap_poster, short_en, tf_justify, ib_order, short_kr)은 학생이 귀로 듣고 노트테이킹·기억할 수 있는 핵심 정보(날짜, 장소, 행동, 의도, 이유, 관점 등)만 물어야 하며, 철자가 지나치게 까다로운 저빈도 고유명사나 긴 원문 문장 그대로 받아쓰기를 요구하지 마세요.
+- 서답형 문항(ib_multi_true, ib_speaker_match, ib_match_info, gap_poster, short_en, tf_justify, ib_order, short_kr)은 학생이 귀로 듣고 노트테이킹·기억할 수 있는 핵심 정보(날짜, 장소, 행동, 의도, 이유, 관점 등)만 물어야 하며, 철자가 지나치게 까다로운 저빈도 고유명사나 긴 원문 문장 그대로 받아쓰기를 요구하지 마세요.
 
 [핵심 출제 원칙]
 1. 화자 표기 및 담화·대화 유형 엄수:
@@ -908,40 +735,44 @@ export async function generateListeningItems(
    } — ${vocabMeta.promptGuide}
    - 난이도 세부 지침(${params.difficulty}): ${difficultyGuide}
    - 성취기준 표기: 각 문항의 achievementStandard 필드는 반드시 설계표에 지정된 2022 개정 교육과정 성취기준 원문([코드] 문장)을 글자 하나 바꾸지 않고 그대로 기재하세요.
-3. 문항 형식별 필수 구성요소 (IB English B Paper 2 · 대구형 DELTA 샘플 · 수능 영어 듣기 공식 규격 준수):
-   [A. IB Paper 2 Listening 공식 핵심 유형 5종]
+3. 문항 형식별 필수 구성요소 (IB DP English B Paper 2 기출 공식 규격 · IB 확장 서답형 · 수능 영어 듣기 1~17번 공식 규격 준수):
+   [A. IB DP English B Paper 2 Listening 공식 기출 핵심 유형 6종]
    - ib_mcq_3 (IB 3지선다 선택형 — Choose the correct answer):
      * IB Paper 2 표준에 따라 options 배열에 **정확히 3개의 선택지**(A, B, C에 해당, 앞에 A./B./C. 기호는 붙이지 말 것)를 작성하고 correctChoice는 1~3(1=A, 2=B, 3=C)으로 지정하세요.
      * questionPrompt는 "Choose the correct answer." 안내와 함께 간결한 질문 또는 문장 완성형 줄기(예: "The speaker explains that the new schedule...")를 제시하세요.
-     * 3개 선지는 문법적 병렬 구조와 유사한 길이를 유지하며, 단순 어휘 일치가 아닌 패러프레이징·함축 추론을 평가하도록 오답 매력도를 높이세요.
+     * 3개 선지는 문법적 병렬 구조와 유사한 길이를 유지하며, 단순 어휘 일치가 아닌 패러프레이징·화자 태도·함축 추론을 평가하도록 오답 매력도를 높이세요.
+   - gap_poster (IB 노트·표·안내문 빈칸 완성형 — Complete the gaps, ≤3 words):
+     * questionPrompt에 IB 3단어 제한 규칙("Complete the following gaps. Use no more than three words for each gap." 또는 한국어 병기)을 명시하세요.
+     * stimulusTitle에 "[2026 ... Notice / Notes]" 등 제목을 쓰고, stimulusBody에 항목별 메모·안내문·요약표와 "[–1–]", "[–2–]", "[–3–]" 형태의 빈칸 3개를 구성하세요 (학생이 귀로 듣고 노트테이킹 가능한 친숙한 영어 어구로 정답 설계, 패러프레이징 활용).
+     * modelAnswer에 IB Markscheme 표기법으로 선택 허용 단어는 괄호(), 대체 정답은 슬래시(/)로 병기하세요 (예: "(1) (school) auditorium / main hall\\n(2) (online) form\\n(3) bring one question").
+     * rubricRows에 3점/2점/1점/0점의 4단계 세부 채점 기준 작성 (최고 점수는 totalMarks와 일치, 3단어 초과 시 오답 처리, 의미 전달을 해치지 않는 경미한 철자 오류 허용 여부 명시).
    - ib_multi_true (IB 참인 진술 복수 선택형 — Choose the true statements):
-     * questionPrompt에 "Choose the two [또는 four/five] true statements."(또는 한국어 병기)를 명확히 지시하세요.
-     * stimulusTitle에 "[True Statements]" 등 제목을 쓰고, stimulusBody에 A.~E.(참 2개) 또는 A.~H./A.~J.(참 4~5개)의 영문 진술문 목록을 "[  ] A. ..." 형태로 제시하세요.
+     * questionPrompt에 "Choose the two [또는 four] true statements."(또는 한국어 병기)를 명확히 지시하세요.
+     * stimulusTitle에 "[True Statements]" 등 제목을 쓰고, stimulusBody에 A.~E.(참 2개) 또는 A.~H.(참 4개)의 영문 진술문 목록을 "[  ] A. ..." 형태로 제시하세요.
      * modelAnswer에 정답 알파벳만 명확히 기재(예: "B, D" 또는 "A, C, E, G")하고, rubricRows에 맞춘 개수당 1점 기준의 부분점수 채점 기준표(최고 점수는 totalMarks와 일치, 초과 선택 감점 유의사항 포함)를 작성하세요.
-   - ib_speaker_match (IB 화자·관점 매칭 체크표 — Whose opinion / Matching):
+   - short_en (IB 영어 단답형 — Answer the following questions):
+     * questionPrompt에 "Answer the following questions."(또는 한국어 병기)를 쓰고, stimulusBody에 2~3개의 구체적 Wh-질문("(1) ...?\\n(2) ...?")을 제시하세요.
+     * modelAnswer에 각 소문항별 IB Markscheme 스타일 모범답안(Target / Accept / Do not accept 및 괄호 허용 어구 병기)을 작성하고, rubricRows에 다단계 채점 기준표(최고 점수는 totalMarks와 일치, 의미를 해치지 않는 경미한 철자·문법 오류 허용 및 핵심 수식어 누락 불허 명시)를 작성하세요.
+   - ib_speaker_match (IB 화자·관점 매칭 체크표 — Whose opinion?):
      * 반드시 두 화자(M, W — 대본에 이름 또는 역할 명시)가 의견·관점·경험을 나누는 대화·인터뷰·토론으로 대본을 작성하세요.
      * questionPrompt에 "Tick [✓] one correct option for each statement." 등 지시문을 쓰고, stimulusTitle에 "[Whose opinion is it?]" 등 제목을 작성하세요.
      * stimulusBody에 3~4개 진술문과 열 구분 표(예: "Statement | Speaker A (M) | Speaker B (W) | Both"와 각 행)를 제시하세요.
      * modelAnswer에 각 번호별 정답 화자(예: "(1) Speaker A  (2) Both  (3) Speaker B")를 기재하고 rubricRows에 항목당 1점 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
-   - gap_poster (IB·대구형 노트·안내문·포스터·표 빈칸 완성형):
-     * questionPrompt에 IB 3단어 제한 규칙("Complete the following gaps. Use no more than three words for each gap." 또는 한국어 병기)을 명시하세요.
-     * stimulusTitle에 "[2026 ... Notice / Notes]" 등 제목을 쓰고, stimulusBody에 항목별 메모·안내문·비교표와 "[–1–]", "[–2–]", "[–3–]" 형태의 빈칸 3개를 구성하세요 (학생이 귀로 듣고 노트테이킹 가능한 친숙한 영어 어구로 정답 설계, 패러프레이징 활용).
-     * modelAnswer에 IB Markscheme 표기법으로 선택 허용 단어는 괄호(), 대체 정답은 슬래시(/)로 병기하세요 (예: "(1) (school) auditorium / main hall\\n(2) (online) form\\n(3) bring one question").
-     * rubricRows에 3점/2점/1점/0점의 4단계 세부 채점 기준 작성 (최고 점수는 totalMarks와 일치, 3단어 초과 시 오답 처리, 의미 전달을 해치지 않는 경미한 철자 오류 허용 여부 명시).
-   - short_en (IB 영어 단답형 — Answer the following questions):
-     * questionPrompt에 "Answer the following questions."(또는 한국어 병기)를 쓰고, stimulusBody에 2~3개의 구체적 Wh-질문("(1) ...?\\n(2) ...?")을 제시하세요.
-     * modelAnswer에 각 소문항별 IB Markscheme 스타일 모범답안(Accept / Do not accept 및 괄호 허용 어구 병기)을 작성하고, rubricRows에 다단계 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
-   [B. 대구형 IB 확장(DELTA 샘플) · 현장지원단 자료집 유형]
-   - tf_justify (진위(T/F)·동의 판별 및 근거 서술형):
+   - ib_match_info (IB 정보·문장 연결 매칭형 — Matching with extra distractors):
+     * questionPrompt에 "Match each item/first half (1–4) with the correct description/ending (A–F). There are two extra options you do not need."(또는 한국어 병기)를 명확히 지시하세요.
+     * stimulusTitle에 "[Match the Information / Sentence Halves]" 등 제목을 쓰고, stimulusBody에 좌측 항목 (1)~(4)와 우측 보기 A.~F.(정답 4개 + 여분 오답 2개)를 깔끔하게 구분하여 제시하세요.
+     * modelAnswer에 각 번호별 정답 알파벳(예: "(1) C  (2) A  (3) F  (4) D")을 명확히 기재하고, rubricRows에 항목당 1점 기준의 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
+   [B. IB 확장 · 대구형 사고력 서답 유형 3종]
+   - tf_justify (진위(T/F) 판별 및 근거 서술형):
      * stimulusTitle에 "[True / False & Justification]" 등 제목을 쓰고, stimulusBody에 2~3개의 진술문과 "(True / False) — Justification:" 작성란을 제시하세요.
-     * modelAnswer에 각 문항의 T/F 판정과 대본 기반 핵심 근거(Justification)를 함께 제시하고, rubricRows에 판정+근거 결합 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
-   - ib_order (순서 배열형 — Put the events/steps in order):
+     * modelAnswer에 각 문항의 T/F 판정과 대본 기반 핵심 근거(Justification)를 함께 제시하고, rubricRows에 판정+근거 결합 채점 기준표(최고 점수는 totalMarks와 일치, 판정만 맞고 근거가 틀린 경우 부분/0점 기준 명시)를 작성하세요.
+   - ib_order (사건·절차 순서 배열형 — Put the events/steps in order):
      * stimulusTitle에 "[Order the Events / Steps]" 등 제목을 쓰고, stimulusBody에 대본 속 사건·절차 4~5개를 무작위 순서로 섞어 "(A) ...\\n(B) ...\\n(C) ...\\n(D) ..." 형태로 제시하세요.
      * modelAnswer에 올바른 순서(예: "(C) → (A) → (D) → (B)")를 제시하고, rubricRows에 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
    - short_kr (대구형 우리말 의도·이유·함축 서술형):
      * stimulusBody에 "(1) 화자의 의도(요청 사항):\\n(2) 요청하게 된 이유:" 등 구체적 우리말 답안 작성 틀을 제시하세요.
      * modelAnswer에 각 소항목별 명확한 우리말 모범답안을 제시하고, rubricRows에 4점/2점/1점/0점(또는 3점/2점/1점/0점) 다단계 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
-   [C. 5지선다 객관식 — 수능 영어 듣기 1~17번 & 대구 C형]
+   [C. 기존 영어듣기 유형 — 대학수학능력시험(수능) 영어 듣기 1~17번 5지선다]
    - mcq_5 (5지선다 선택형):
      * 각 문항의 설계표에 명시된 [발문언어]와 [보기(①~⑤)언어] 및 수능 유형별 형식을 100% 엄수하여 options 배열에 5개의 선택지를 작성하세요 (앞에 ①~⑤ 기호는 붙이지 마세요).
      * [반드시 영어(English·숫자·기호) 보기]로 지정된 문항은 options 배열의 5개 선택지를 반드시 영어(숫자 유형은 금액 표기, 도표 유형은 "(A)"~"(E)")로만 작성하며 한글 설명을 절대 섞지 마세요.
@@ -966,7 +797,7 @@ export async function generateListeningItems(
 
 - 평가 체제: ${
     params.mode === 'ib'
-      ? '대구형(IB) 영어듣기 평가 (IB English B Paper 2 공식 유형 + DELTA 샘플 · 현장지원단 자료집 유형)'
+      ? '대구형(IB) 영어듣기 평가 (IB DP English B Paper 2 공식 기출 6유형 + IB 확장·대구형 서답 3유형)'
       : '기존 영어듣기 평가 (대학수학능력시험 영어 듣기 1~17번 공식 유형 · 100% 5지선다 객관식)'
   }
 - 학교급 / 학년 / 과목: ${params.schoolLevel}등학교 ${params.grade} / ${params.subject}

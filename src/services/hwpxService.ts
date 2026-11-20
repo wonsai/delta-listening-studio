@@ -30,6 +30,7 @@ function isBoxStimulusFormat(format: ListeningItem['questionFormat']): boolean {
     format === 'tf_justify' ||
     format === 'ib_multi_true' ||
     format === 'ib_speaker_match' ||
+    format === 'ib_match_info' ||
     format === 'ib_order'
   );
 }
@@ -313,8 +314,8 @@ function configureTableDefaults(table: HwpxOxmlTable, width: number, colWidths: 
 
 /**
  * 1. 교사용 출제 원안지 전체 (.hwpx)
- * 업로드된 자료집 PDF 서식(가. 평가 운영 및 적용 방안 + 나. 문항 자료 표 + 포스터 상자 + 4열 채점기준표)과
- * DELTA 확장 항목(수행지시어, 어휘 수준·어휘 수, 의사소통 기능·구문)을 완벽히 재현합니다.
+ * 표준 교사용 문항 명세 서식(가. 평가 운영 및 적용 방안 + 나. 문항 자료 표 + 포스터 상자 + 4열 채점기준표)과
+ * DELTA 확장 항목(수행지시어, 어휘 수준·어휘 수, 의사소통 기능·구문)을 출력합니다.
  */
 export async function buildMasterSpecHwpx(
   items: ListeningItem[],
@@ -905,6 +906,7 @@ export function summarizeOfficialExamComposition(
       it.questionFormat === 'short_en' ||
       it.questionFormat === 'ib_multi_true' ||
       it.questionFormat === 'ib_speaker_match' ||
+      it.questionFormat === 'ib_match_info' ||
       it.questionFormat === 'ib_order'
     ) {
       shortAnswerCount += 1;

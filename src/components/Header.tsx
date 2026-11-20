@@ -3,7 +3,6 @@ import {
   KeyRound,
   CheckCircle2,
   AlertCircle,
-  BookOpen,
   Download,
   Upload,
   X,
@@ -23,7 +22,7 @@ interface HeaderProps {
   itemCount: number;
   apiKey: string;
   onSaveApiKey: (key: string) => void;
-  onLoadSamples: () => void;
+  openApiKeyModalSignal?: number;
   onExportJson: () => void;
   onImportJson: (file: File) => void;
 }
@@ -42,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   itemCount,
   apiKey,
   onSaveApiKey,
-  onLoadSamples,
+  openApiKeyModalSignal = 0,
   onExportJson,
   onImportJson,
 }) => {
@@ -120,6 +119,14 @@ export const Header: React.FC<HeaderProps> = ({
     setTestResult(null);
     setShowKeyModal(true);
   };
+
+  useEffect(() => {
+    if (openApiKeyModalSignal > 0) {
+      setDraftKey(apiKey);
+      setTestResult(null);
+      setShowKeyModal(true);
+    }
+  }, [openApiKeyModalSignal]);
 
   const handleTestKey = async () => {
     setTesting(true);
@@ -231,15 +238,6 @@ export const Header: React.FC<HeaderProps> = ({
 
                 <button
                   type="button"
-                  onClick={onLoadSamples}
-                  className="p-1.5 rounded-lg text-slate-600 hover:text-[#09396A] hover:bg-slate-100 transition"
-                  title="자료집 예시 문항 불러오기"
-                >
-                  <BookOpen className="w-3.5 h-3.5 text-[#357DC7]" />
-                </button>
-
-                <button
-                  type="button"
                   onClick={onExportJson}
                   className="hidden md:inline-flex p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition"
                   title="백업 저장 (JSON)"
@@ -342,16 +340,6 @@ export const Header: React.FC<HeaderProps> = ({
                     첫 화면
                   </button>
                 )}
-
-                <button
-                  type="button"
-                  onClick={onLoadSamples}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition"
-                  title="업로드된 현장지원단 자료집 4개 모델 예시 문항 불러오기"
-                >
-                  <BookOpen className="w-3.5 h-3.5 text-[#357DC7]" />
-                  자료집 예시 문항 불러오기
-                </button>
 
                 <button
                   type="button"

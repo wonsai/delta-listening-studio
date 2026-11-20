@@ -732,15 +732,15 @@ export function validateListeningItem(
 
     if (
       item.questionFormat === 'gap_poster' &&
-      !/(?:\(\s*[1-3]\s*\)|_{3,})/.test(item.stimulusBody || '')
+      !/(?:\(\s*[1-3]\s*\)|\[\s*[-–—]?\s*[1-3]\s*[-–—]?\s*\]|_{3,})/.test(item.stimulusBody || '')
     ) {
       issues.push({
         id: 'gap-poster-no-blanks',
         severity: 'warning',
         category: 'structure',
-        title: '포스터 빈칸 완성형인데 안내문 상자에 빈칸 표기가 없습니다',
-        detail: '안내문 본문에 (   1   ), (   2   ) 형태의 빈칸을 넣어 주세요.',
-        autoFixHint: '포스터/안내문 상자(stimulusBody)에 (   1   ), (   2   ) 형태의 명확한 빈칸을 구성해 주세요.',
+        title: '노트·포스터 빈칸 완성형인데 안내문 상자에 빈칸 표기가 없습니다',
+        detail: '안내문 본문에 [–1–], [–2–] 또는 (   1   ), (   2   ) 형태의 빈칸을 넣어 주세요.',
+        autoFixHint: '안내문/노트 상자(stimulusBody)에 [–1–], [–2–] 형태의 명확한 빈칸을 구성해 주세요.',
       });
     }
 

@@ -48,10 +48,11 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
         questionFormatMode: 'auto',
         questionFormats: [
           'ib_mcq_3',
-          'ib_multi_true',
-          'ib_speaker_match',
           'gap_poster',
+          'ib_multi_true',
           'short_en',
+          'ib_speaker_match',
+          'ib_match_info',
         ],
         evalPurpose: '정기시험 혹은 수행평가(서술형/서답형)',
         selectedStandards: [],
@@ -188,24 +189,24 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
 
             <div className="mt-4">
               <div className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-[#09396A] mb-1.5">
-                IB English B Paper 2 · 대구형 IB 샘플 모델
+                IB DP English B Paper 2 기출 유형 반영
               </div>
               <h2 className="text-lg font-extrabold text-slate-900">
                 대구형 영어듣기 평가 (IB · 서답형/선택형)
               </h2>
               <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                IB Paper 2 Listening 기출 및 대구형 IB 샘플(DELTA · 2026 현장지원단 자료집)을 기반으로 <b>3지선다(A~C), 참인 진술 복수 선택, 화자·관점 매칭표, 노트·포스터 빈칸(3단어 이내), 영어 단답형, T/F+근거, 순서 배열, 우리말 서술형</b>과 채점 기준표를 설계합니다.
+                실제 <b>IB DP English B Paper 2 Listening 기출 6유형</b>(3지선다 A~C, 3단어 이내 빈칸 완성, 참인 진술 복수 선택, 영어 단답형, 화자·관점 매칭표, 정보·문장 연결 매칭)과 <b>IB 확장 사고력 서답 3유형</b>(T/F+근거, 순서 배열, 우리말 서술)을 설계합니다.
               </p>
             </div>
 
             <ul className="mt-4 pt-3 border-t border-slate-200/80 space-y-1.5 text-xs text-slate-700">
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#357DC7]" />
-                IB Paper 2 핵심 5유형 + DELTA(T/F·순서배열) + 대구 자료집(우리말 서술·5지선다)
+                IB Paper 2 공식 기출 6유형 + IB 확장·대구형 사고력 서답 3유형
               </li>
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#357DC7]" />
-                10대 수행지시어 및 IB Markscheme(Accept / Reject · 부분점수) 루브릭 자동 생성
+                10대 수행지시어 및 IB Markscheme(Accept / Do not accept · 부분점수) 자동 생성
               </li>
             </ul>
           </button>
