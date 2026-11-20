@@ -55,13 +55,138 @@ export function saveApiKey(key: string): void {
 
 export const FIXED_GEMINI_MODEL = 'gemini-3.8-flash';
 
-const GEMINI_MODEL_CANDIDATES = [
+const GEMINI_MODEL_PRIORITY = [
   'gemini-3.8-flash',
+  'gemini-3.6-flash',
   'gemini-3-flash',
-  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
   'gemini-3.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-2.0-flash',
 ];
+
+let cachedWorkingModel: string | null = null;
+let cachedDiscoveredKey = '';
+let cachedDiscoveredModels: string[] | null = null;
+
+async function discoverAvailableModels(
+  apiKey: string,
+  externalSignal?: AbortSignal
+): Promise<string[]> {
+  if (cachedDiscoveredModels && cachedDiscoveredKey === apiKey) {
+    return cachedDiscoveredModels;
+  }
+
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key=${encodeURIComponent(
+        apiKey
+      )}`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
+
+    if (!res.ok) {
+      return GEMINI_MODEL_PRIORITY;
+    }
+    const json = (await res.json()) as {
+      models?: Array<{
+        name?: string;
+        supportedGenerationMethods?: string[];
+      }>;
+    };
+    const rawList = Array.isArray(json?.models) ? json.models : [];
+    const usable = rawList
+      .filter((m) => {
+        const methods = m.supportedGenerationMethods || [];
+        if (!methods.includes('generateContent')) return false;
+        const id = String(m.name || '').replace(/^models\//, '');
+        if (!/^gemini-/i.test(id)) return false;
+        if (
+          /tts|image|embedding|live|audio|robotics|computer-use|aqa|veo|imagen|gemma|learnlm|vision|exp-0827/i.test(
+            id
+          )
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((m) => String(m.name || '').replace(/^models\//, ''));
+
+    if (usable.length === 0) {
+      return GEMINI_MODEL_PRIORITY;
+    }
+
+    const usableSet = new Set(usable);
+    const ordered: string[] = [];
+
+    // 1) 우선순위 리스트 중 실제 계정에 존재하는 모델 우선 배치
+    for (const pref of GEMINI_MODEL_PRIORITY) {
+      if (usableSet.has(pref)) {
+        ordered.push(pref);
+        usableSet.delete(pref);
+      }
+    }
+    // 2) 나머지 Flash 계열 모델 추가 (버전 내림차순)
+    const remainingFlash = Array.from(usableSet)
+      .filter((id) => /flash/i.test(id))
+      .sort()
+      .reverse();
+    for (const id of remainingFlash) {
+      ordered.push(id);
+      usableSet.delete(id);
+    }
+    // 3) 혹시 Flash가 없을 경우 Pro 계열도 예비로 포함
+    if (ordered.length === 0) {
+      ordered.push(...Array.from(usableSet).slice(0, 3));
+    }
+
+    cachedDiscoveredKey = apiKey;
+    cachedDiscoveredModels = ordered;
+    return ordered;
+  } catch {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
+    return GEMINI_MODEL_PRIORITY;
+  }
+}
+
+async function getOrderedModelCandidates(
+  apiKey: string,
+  externalSignal?: AbortSignal
+): Promise<string[]> {
+  const discovered = await discoverAvailableModels(apiKey, externalSignal);
+  if (!cachedWorkingModel || !discovered.includes(cachedWorkingModel)) {
+    return discovered;
+  }
+  return [
+    cachedWorkingModel,
+    ...discovered.filter((m) => m !== cachedWorkingModel),
+  ];
+}
+
+function buildThinkingConfigForModel(
+  model: string,
+  useThinking: boolean
+): Record<string, unknown> | undefined {
+  if (!useThinking) return undefined;
+  // Gemini 3.x / 4.x: 구조화 JSON(responseSchema) 대량 생성 시 LOW가 속도와 품질 균형이 최적
+  if (/^gemini-(?:3|4)/.test(model)) {
+    return { thinkingLevel: 'LOW' };
+  }
+  // Gemini 2.5: thinkingLevel 대신 thinkingBudget 사용 (0으로 지연 최소화)
+  if (/^gemini-2\.5/.test(model)) {
+    return { thinkingBudget: 0 };
+  }
+  return undefined;
+}
 
 function parseGeminiJsonText(rawText: string): unknown {
   const cleaned = rawText
@@ -90,10 +215,18 @@ async function callSingleGeminiModel(
   systemInstruction: string,
   userPrompt: string,
   responseSchema: Record<string, unknown>,
-  useThinking: boolean
+  useThinking: boolean,
+  externalSignal?: AbortSignal
 ): Promise<
   | { ok: true; data: unknown }
-  | { ok: false; status: number; detail: string; isInvalidKey?: boolean; isTruncated?: boolean }
+  | {
+      ok: false;
+      status: number;
+      detail: string;
+      isInvalidKey?: boolean;
+      isTruncated?: boolean;
+      isUserAborted?: boolean;
+    }
 > {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model
@@ -104,10 +237,9 @@ async function callSingleGeminiModel(
     responseSchema,
     maxOutputTokens: 16384,
   };
-  if (useThinking && /gemini-(?:3|4|2\.5)/.test(model)) {
-    generationConfig.thinkingConfig = {
-      thinkingLevel: 'MEDIUM',
-    };
+  const thinkingConfig = buildThinkingConfigForModel(model, useThinking);
+  if (thinkingConfig) {
+    generationConfig.thinkingConfig = thinkingConfig;
   }
 
   const body = {
@@ -123,8 +255,23 @@ async function callSingleGeminiModel(
     generationConfig,
   };
 
+  if (externalSignal?.aborted) {
+    return {
+      ok: false,
+      status: 499,
+      detail: '사용자가 출제를 중지했습니다.',
+      isUserAborted: true,
+    };
+  }
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 90000);
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 45000);
 
   let res: Response;
   try {
@@ -136,11 +283,20 @@ async function callSingleGeminiModel(
     });
   } catch (err) {
     clearTimeout(timeoutId);
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    externalSignal?.removeEventListener('abort', onExternalAbort);
+    if (externalSignal?.aborted) {
+      return {
+        ok: false,
+        status: 499,
+        detail: '사용자가 출제를 중지했습니다.',
+        isUserAborted: true,
+      };
+    }
+    if (timedOut || (err instanceof DOMException && err.name === 'AbortError')) {
       return {
         ok: false,
         status: 408,
-        detail: '요청 시간이 초과되었습니다(90초). 네트워크 상태를 확인하거나 문항 수를 줄여 시도해 주세요.',
+        detail: `${model} 응답이 45초를 초과하여 시간 초과되었습니다.`,
       };
     }
     return {
@@ -150,6 +306,7 @@ async function callSingleGeminiModel(
     };
   }
   clearTimeout(timeoutId);
+  externalSignal?.removeEventListener('abort', onExternalAbort);
 
   if (res.ok) {
     const json = await res.json();
@@ -183,7 +340,7 @@ async function callSingleGeminiModel(
         isTruncated: finishReason === 'MAX_TOKENS',
         detail:
           finishReason === 'MAX_TOKENS'
-            ? '생성 분량이 길어 응답이 중간에 잘렸습니다. 출제 문항 수를 줄여(예: 2~4문항) 다시 시도해 주세요.'
+            ? '생성 분량이 길어 응답이 중간에 잘렸습니다. 출제 문항 수를 줄여 다시 시도해 주세요.'
             : parseErr instanceof Error
             ? parseErr.message
             : 'AI 응답을 해석하지 못했습니다.',
@@ -216,21 +373,24 @@ async function callGeminiJson(
   systemInstruction: string,
   userPrompt: string,
   responseSchema: Record<string, unknown>,
-  onStatus?: (msg: string) => void
+  onStatus?: (msg: string) => void,
+  externalSignal?: AbortSignal
 ): Promise<unknown> {
   const key = apiKey.trim();
   if (!key) {
     throw new Error('Gemini API 키가 입력되지 않았습니다. 우측 상단 [API 키 설정]에서 키를 입력해 주세요.');
   }
 
+  onStatus?.('사용 가능한 최신 Gemini 출제 모델을 확인하는 중...');
+  const candidates = await getOrderedModelCandidates(key, externalSignal);
   const errors: string[] = [];
 
-  for (let i = 0; i < GEMINI_MODEL_CANDIDATES.length; i++) {
-    const model = GEMINI_MODEL_CANDIDATES[i];
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i];
     onStatus?.(
       i === 0
         ? `AI 출제 엔진(${model})에서 문항을 설계하고 있습니다...`
-        : `대체 출제 엔진(${model})으로 자동 전환하여 문항을 설계하고 있습니다...`
+        : `${candidates[i - 1]} 지연/불가 → 대체 엔진(${model})으로 전환하여 출제 중...`
     );
 
     let attempt = await callSingleGeminiModel(
@@ -239,8 +399,13 @@ async function callGeminiJson(
       systemInstruction,
       userPrompt,
       responseSchema,
-      true
+      true,
+      externalSignal
     );
+
+    if (!attempt.ok && attempt.isUserAborted) {
+      throw new Error('AI 자동 출제가 취소되었습니다.');
+    }
 
     // thinkingConfig / thinkingLevel 미지원 400 오류 시 thinkingConfig 제외 후 동일 모델 즉시 재시도
     if (
@@ -255,11 +420,16 @@ async function callGeminiJson(
         systemInstruction,
         userPrompt,
         responseSchema,
-        false
+        false,
+        externalSignal
       );
+      if (!attempt.ok && attempt.isUserAborted) {
+        throw new Error('AI 자동 출제가 취소되었습니다.');
+      }
     }
 
     if (attempt.ok) {
+      cachedWorkingModel = model;
       return attempt.data;
     }
 
@@ -275,9 +445,10 @@ async function callGeminiJson(
 
     errors.push(`${model}: ${attempt.detail}`);
 
-    // 404(모델 미지원), 429(한도 초과), 503(과부하), 400(모델 설정 호환성) 시 다음 모델로 자동 폴백
+    // 404(모델 미지원), 408(시간 초과), 429(한도 초과), 503(과부하), 400/500 시 다음 모델로 자동 폴백
     const canFallback =
       attempt.status === 404 ||
+      attempt.status === 408 ||
       attempt.status === 429 ||
       attempt.status === 503 ||
       attempt.status === 400 ||
@@ -302,13 +473,15 @@ export async function testGeminiApiKey(apiKey: string): Promise<{ ok: boolean; m
   if (!key) return { ok: false, message: 'API 키를 입력해 주세요.' };
   try {
     let lastErr = '';
-    for (const model of GEMINI_MODEL_CANDIDATES) {
+    const candidates = await getOrderedModelCandidates(key);
+    for (const model of candidates) {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           model
         )}?key=${encodeURIComponent(key)}`
       );
       if (res.ok) {
+        cachedWorkingModel = model;
         return {
           ok: true,
           message: `정상 연결됨 (출제 모델: ${model} 준비 완료)`,
@@ -604,7 +777,8 @@ function normalizeGeneratedItem(
 export async function generateListeningItems(
   apiKey: string,
   params: GenerationParams,
-  onStatus?: (msg: string) => void
+  onStatus?: (msg: string) => void,
+  signal?: AbortSignal
 ): Promise<ListeningItem[]> {
   const vocabMeta =
     VOCAB_LEVELS.find((v) => v.id === params.vocabLevelId) || VOCAB_LEVELS[1];
@@ -612,46 +786,40 @@ export async function generateListeningItems(
 
   const slotPlan = buildItemSlotPlan(params);
 
-  const uniqueFormats = Array.from(new Set(slotPlan.map((s) => s.format)));
-  const formatDescriptions = uniqueFormats
-    .map((fid) => {
-      const f = QUESTION_FORMATS.find((q) => q.id === fid);
-      return f ? `- ${f.id} (${f.label}): ${f.description}` : `- ${fid}`;
-    })
-    .join('\n');
-
-  const slotBlueprintLines = slotPlan
-    .map((slot) => {
-      const fmtLabel =
-        QUESTION_FORMATS.find((f) => f.id === slot.format)?.shortBadge ||
-        slot.format;
-      const ttLabel =
-        TEXT_TYPES.find((t) => t.id === slot.textType)?.label || slot.textType;
-      const stdMeta =
-        params.mode === 'std'
-          ? STD_SKILLS.find((s) => s.value === slot.skill)
-          : undefined;
-      const skillTag = stdMeta
-        ? `[수능 ${stdMeta.csatNo} ${stdMeta.label || stdMeta.value}${
-            stdMeta.csatPart === '간접 말하기' ? ' · 간접 말하기' : ''
-          }]`
-        : params.selectedSkills.length === 0
-        ? `[성취기준 맞춤 자동선택 — 추천: ${slot.skill}]`
-        : `[${slot.skill}]`;
-      const isMcq = slot.format === 'mcq_5' || slot.format === 'ib_mcq_3';
-      const choiceTag = slot.format === 'ib_mcq_3' ? '보기(A~C 3지선다)' : '보기(①~⑤ 5지선다)';
-      const mcqSpec = isMcq
-        ? ` | 발문언어=[${
-            slot.mcqPromptLang === 'en' ? '영어(English) 발문' : '한국어 발문'
-          }] | ${choiceTag}언어=[${
-            slot.mcqOptionLang === 'en'
-              ? '반드시 영어(English·숫자·기호) 보기'
-              : '반드시 한국어 보기'
-          } — 형식: ${slot.mcqOptionStyleHint}]`
-        : '';
-      return `  * ${slot.itemNo}번 문항: 문항형식=[${slot.format} (${fmtLabel})] | 담화·대화유형=[${ttLabel}] | 성취기준=[${slot.standardText}] | 평가기능=${skillTag} | 수행지시어=[${slot.directive}]${mcqSpec}`;
-    })
-    .join('\n');
+  const buildBlueprintLines = (slots: typeof slotPlan) =>
+    slots
+      .map((slot) => {
+        const fmtLabel =
+          QUESTION_FORMATS.find((f) => f.id === slot.format)?.shortBadge ||
+          slot.format;
+        const ttLabel =
+          TEXT_TYPES.find((t) => t.id === slot.textType)?.label || slot.textType;
+        const stdMeta =
+          params.mode === 'std'
+            ? STD_SKILLS.find((s) => s.value === slot.skill)
+            : undefined;
+        const skillTag = stdMeta
+          ? `[수능 ${stdMeta.csatNo} ${stdMeta.label || stdMeta.value}${
+              stdMeta.csatPart === '간접 말하기' ? ' · 간접 말하기' : ''
+            }]`
+          : params.selectedSkills.length === 0
+          ? `[성취기준 맞춤 자동선택 — 추천: ${slot.skill}]`
+          : `[${slot.skill}]`;
+        const isMcq = slot.format === 'mcq_5' || slot.format === 'ib_mcq_3';
+        const choiceTag =
+          slot.format === 'ib_mcq_3' ? '보기(A~C 3지선다)' : '보기(①~⑤ 5지선다)';
+        const mcqSpec = isMcq
+          ? ` | 발문언어=[${
+              slot.mcqPromptLang === 'en' ? '영어(English) 발문' : '한국어 발문'
+            }] | ${choiceTag}언어=[${
+              slot.mcqOptionLang === 'en'
+                ? '반드시 영어(English·숫자·기호) 보기'
+                : '반드시 한국어 보기'
+            } — 형식: ${slot.mcqOptionStyleHint}]`
+          : '';
+        return `  * ${slot.itemNo}번 문항: 문항형식=[${slot.format} (${fmtLabel})] | 담화·대화유형=[${ttLabel}] | 성취기준=[${slot.standardText}] | 평가기능=${skillTag} | 수행지시어=[${slot.directive}]${mcqSpec}`;
+      })
+      .join('\n');
 
   const allModeSkills = params.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
   const activeEnSkillSet = new Set(
@@ -793,49 +961,6 @@ export async function generateListeningItems(
    - 원어민이 소리 내어 읽었을 때 어색한 직역 용어나 난이도 대비 지나치게 어려운 문어체 단어가 없는가?
    - 발문(questionPrompt), 대본(transcript), 선택지(options)/모범답안(modelAnswer), 정답 번호(correctChoice), 채점기준 최고점(rubricRows vs totalMarks), 해설(explanation) 간에 논리적 모순이 없는가?`;
 
-  const userPrompt = `다음 출제 사양과 **문항별 배정 설계표**에 맞추어 서로 소재와 상황이 겹치지 않는 완성도 높은 영어듣기 문항 **총 ${params.itemCount}문항**을 출제해 주세요.
-
-- 평가 체제: ${
-    params.mode === 'ib'
-      ? '대구형(IB) 영어듣기 평가 (IB DP English B Paper 2 공식 기출 6유형 + IB 확장·대구형 서답 3유형)'
-      : '기존 영어듣기 평가 (대학수학능력시험 영어 듣기 1~17번 공식 유형 · 100% 5지선다 객관식)'
-  }
-- 학교급 / 학년 / 과목: ${params.schoolLevel}등학교 ${params.grade} / ${params.subject}
-- 평가 목적: ${params.evalPurpose}
-- 문항 형식 상세 지침:
-${formatDescriptions}
-- [필수 준수] 1번~${params.itemCount}번 문항별 배정 설계표:
-${slotBlueprintLines}
-- 객관식 보기 및 발문 언어 원칙: ${mcqOptionPolicySummary} / 발문 언어: ${
-    (params.mcqPromptLanguage || 'ko') === 'en'
-      ? '영어(English) 발문'
-      : '한국어 발문 (기출·정기고사 표준)'
-  }
-- 평가 기능(문항 유형) 배정 원칙: ${
-    params.mode === 'std'
-      ? params.stdTypeMode === 'counts'
-        ? '교사가 수능 유형별 문항 개수를 직접 지정했습니다. 설계표에 배정된 수능 문항 번호별 유형과 대본·보기 규격을 정확히 준수하세요.'
-        : params.selectedSkills.length === 0
-        ? '교사가 수능 유형 자동 균형 배정을 선택했습니다. 설계표에 배정된 수능 1~17번 유형 순서와 규격을 정확히 준수하세요.'
-        : `교사가 선택한 수능 유형(${params.selectedSkills.join(', ')})을 설계표 순서에 맞추어 정확히 출제하세요.`
-      : params.selectedSkills.length === 0
-      ? '교사가 [성취기준 맞춤 자동 배정]을 선택했습니다. 각 문항에 배정된 성취기준과 대구형(IB) 문항 형식에 가장 타당한 평가 기능(skill)을 설계표의 추천 유형을 참고하여 정확히 출제하세요.'
-      : `교사가 지정한 유형(${params.selectedSkills.join(', ')})을 설계표 순서에 맞추어 정확히 출제하세요.`
-  }
-- 수행지시어 지침: ${directiveGuide}
-- 소재 대범주([별표 1]): ${params.selectedTopics.length ? params.selectedTopics.join(', ') : '학교생활, 생태전환(환경), 사회생활, 개인생활, 일반교양 등 문항별로 서로 다른 실생활 밀착 소재 자동 배정'}
-${params.selectedSubtopic ? `- 세부 소범주: ${params.selectedSubtopic}` : ''}
-${params.customTopicDetail ? `- 교사 지정 구체적 상황/주제: ${params.customTopicDetail}` : ''}
-- 대본 목표 단어 수: 지문당 약 ${params.targetWordCount}단어
-- 어휘 수준: ${vocabMeta.label}
-${params.requiredWords.trim() ? `- 반드시 대본에 자연스럽게 포함할 필수 어휘: ${params.requiredWords}` : ''}
-- 목표 난이도: ${params.difficulty} (${difficultyGuide})
-${params.selectedExpressions.length ? `- 반영할 [별표 2] 의사소통 기능: ${params.selectedExpressions.join(', ')}` : ''}
-${params.selectedStructures.length ? `- 반영할 [별표 4] 언어 형식(구문): ${params.selectedStructures.join(', ')}` : ''}
-${params.extraInstructions.trim() ? `- 교사 추가 요청사항: ${params.extraInstructions}` : ''}
-${referenceBlock}
-반드시 JSON 스키마의 items 배열 안에 정확히 ${params.itemCount}개의 문항 객체를 순서대로 담아 반환하세요.`;
-
   const batchSchema = {
     type: 'OBJECT',
     properties: {
@@ -847,31 +972,168 @@ ${referenceBlock}
     required: ['items'],
   };
 
-  const parsed = (await callGeminiJson(
-    apiKey,
-    systemInstruction,
-    userPrompt,
-    batchSchema,
-    onStatus
-  )) as { items?: Record<string, unknown>[] };
-
-  const rawItems = Array.isArray(parsed?.items) ? parsed.items : [];
-  if (rawItems.length === 0) {
-    throw new Error('생성된 문항 데이터가 없습니다. 파라미터를 확인하고 다시 시도해 주세요.');
+  // 대량 문항 한 번에 호출 시 응답 지연(타임아웃)을 방지하기 위해 2문항 단위로 분할 병렬 생성
+  const CHUNK_SIZE = 2;
+  const chunks: Array<{ startIdx: number; slots: typeof slotPlan }> = [];
+  for (let start = 0; start < slotPlan.length; start += CHUNK_SIZE) {
+    chunks.push({
+      startIdx: start,
+      slots: slotPlan.slice(start, start + CHUNK_SIZE),
+    });
   }
 
-  return rawItems.map((raw, idx) => {
-    const slot = slotPlan[idx];
-    const enrichedRaw: Record<string, unknown> = {
-      ...raw,
-      questionFormat: raw.questionFormat || slot?.format,
-      achievementStandard: raw.achievementStandard || slot?.standardText,
-      skill: raw.skill || slot?.skill,
-      directive: raw.directive || slot?.directive,
-      materialType: raw.materialType || slot?.textType,
-    };
-    return normalizeGeneratedItem(enrichedRaw, idx, params, slot?.standardText);
-  });
+  const autoTopicBuckets = [
+    '학교생활, 개인생활(여가·건강)',
+    '생태전환(환경), 사회생활(지역사회·봉사)',
+    '문화(세계 문화·예술), 일반교양(생활 과학·안전)',
+    '가정생활, 민주시민(사회 현안·디지털)',
+    '진로·직업, 여가·여행',
+  ];
+
+  const buildChunkPrompt = (
+    chunkSlots: typeof slotPlan,
+    chunkIdx: number
+  ): string => {
+    const chunkUniqueFormats = Array.from(new Set(chunkSlots.map((s) => s.format)));
+    const chunkFormatDescriptions = chunkUniqueFormats
+      .map((fid) => {
+        const f = QUESTION_FORMATS.find((q) => q.id === fid);
+        return f ? `- ${f.id} (${f.label}): ${f.description}` : `- ${fid}`;
+      })
+      .join('\n');
+    const chunkBlueprintLines = buildBlueprintLines(chunkSlots);
+    const topicDirective = params.selectedTopics.length
+      ? params.selectedTopics.join(', ')
+      : `${autoTopicBuckets[chunkIdx % autoTopicBuckets.length]} 중심으로 문항 간 소재가 겹치지 않게 다양하게 배정`;
+
+    return `다음 출제 사양과 **문항별 배정 설계표**에 맞추어 서로 소재와 상황이 겹치지 않는 완성도 높은 영어듣기 문항 **정확히 ${chunkSlots.length}문항**을 출제해 주세요.
+
+- 평가 체제: ${
+      params.mode === 'ib'
+        ? '대구형(IB) 영어듣기 평가 (IB DP English B Paper 2 공식 기출 6유형 + IB 확장·대구형 서답 3유형)'
+        : '기존 영어듣기 평가 (대학수학능력시험 영어 듣기 1~17번 공식 유형 · 100% 5지선다 객관식)'
+    }
+- 학교급 / 학년 / 과목: ${params.schoolLevel}등학교 ${params.grade} / ${params.subject}
+- 평가 목적: ${params.evalPurpose}
+- 문항 형식 상세 지침:
+${chunkFormatDescriptions}
+- [필수 준수] 문항별 배정 설계표:
+${chunkBlueprintLines}
+- 객관식 보기 및 발문 언어 원칙: ${mcqOptionPolicySummary} / 발문 언어: ${
+      (params.mcqPromptLanguage || 'ko') === 'en'
+        ? '영어(English) 발문'
+        : '한국어 발문 (기출·정기고사 표준)'
+    }
+- 평가 기능(문항 유형) 배정 원칙: ${
+      params.mode === 'std'
+        ? params.stdTypeMode === 'counts'
+          ? '교사가 수능 유형별 문항 개수를 직접 지정했습니다. 설계표에 배정된 수능 문항 번호별 유형과 대본·보기 규격을 정확히 준수하세요.'
+          : params.selectedSkills.length === 0
+          ? '교사가 수능 유형 자동 균형 배정을 선택했습니다. 설계표에 배정된 수능 1~17번 유형 순서와 규격을 정확히 준수하세요.'
+          : `교사가 선택한 수능 유형(${params.selectedSkills.join(', ')})을 설계표 순서에 맞추어 정확히 출제하세요.`
+        : params.selectedSkills.length === 0
+        ? '교사가 [성취기준 맞춤 자동 배정]을 선택했습니다. 각 문항에 배정된 성취기준과 대구형(IB) 문항 형식에 가장 타당한 평가 기능(skill)을 설계표의 추천 유형을 참고하여 정확히 출제하세요.'
+        : `교사가 지정한 유형(${params.selectedSkills.join(', ')})을 설계표 순서에 맞추어 정확히 출제하세요.`
+    }
+- 수행지시어 지침: ${directiveGuide}
+- 소재 대범주([별표 1]): ${topicDirective}
+${params.selectedSubtopic ? `- 세부 소범주: ${params.selectedSubtopic}` : ''}
+${params.customTopicDetail ? `- 교사 지정 구체적 상황/주제: ${params.customTopicDetail}` : ''}
+- 대본 목표 단어 수: 지문당 약 ${params.targetWordCount}단어
+- 어휘 수준: ${vocabMeta.label}
+${params.requiredWords.trim() ? `- 반드시 대본에 자연스럽게 포함할 필수 어휘: ${params.requiredWords}` : ''}
+- 목표 난이도: ${params.difficulty} (${difficultyGuide})
+${params.selectedExpressions.length ? `- 반영할 [별표 2] 의사소통 기능: ${params.selectedExpressions.join(', ')}` : ''}
+${params.selectedStructures.length ? `- 반영할 [별표 4] 언어 형식(구문): ${params.selectedStructures.join(', ')}` : ''}
+${params.extraInstructions.trim() ? `- 교사 추가 요청사항: ${params.extraInstructions}` : ''}
+${referenceBlock}
+반드시 JSON 스키마의 items 배열 안에 정확히 ${chunkSlots.length}개의 문항 객체를 순서대로 담아 반환하세요.`;
+  };
+
+  let completedCount = 0;
+  const totalCount = slotPlan.length;
+  const resultsBySlot = new Array<ListeningItem | null>(totalCount).fill(null);
+
+  const runChunk = async (chunkIdx: number) => {
+    const chunk = chunks[chunkIdx];
+    const rangeLabel =
+      chunk.slots.length === 1
+        ? `${chunk.slots[0].itemNo}번`
+        : `${chunk.slots[0].itemNo}~${chunk.slots[chunk.slots.length - 1].itemNo}번`;
+
+    const parsed = (await callGeminiJson(
+      apiKey,
+      systemInstruction,
+      buildChunkPrompt(chunk.slots, chunkIdx),
+      batchSchema,
+      (msg) => {
+        if (chunks.length === 1) {
+          onStatus?.(msg);
+        } else {
+          onStatus?.(
+            `[${completedCount}/${totalCount}문항 완료] ${rangeLabel} 문항 생성 중 · ${msg}`
+          );
+        }
+      },
+      signal
+    )) as { items?: Record<string, unknown>[] };
+
+    const rawItems = Array.isArray(parsed?.items) ? parsed.items : [];
+    if (rawItems.length === 0) {
+      throw new Error(
+        `${rangeLabel} 문항 생성 결과가 비어 있습니다. 다시 시도해 주세요.`
+      );
+    }
+
+    chunk.slots.forEach((slot, localIdx) => {
+      const raw = rawItems[localIdx];
+      if (!raw) return;
+      const globalIdx = chunk.startIdx + localIdx;
+      const enrichedRaw: Record<string, unknown> = {
+        ...raw,
+        questionFormat: raw.questionFormat || slot.format,
+        achievementStandard: raw.achievementStandard || slot.standardText,
+        skill: raw.skill || slot.skill,
+        directive: raw.directive || slot.directive,
+        materialType: raw.materialType || slot.textType,
+      };
+      resultsBySlot[globalIdx] = normalizeGeneratedItem(
+        enrichedRaw,
+        globalIdx,
+        params,
+        slot.standardText
+      );
+    });
+
+    completedCount += chunk.slots.length;
+    if (chunks.length > 1) {
+      onStatus?.(
+        completedCount >= totalCount
+          ? `총 ${totalCount}문항 생성 완료! 자동 타당도 점검 중...`
+          : `${completedCount} / ${totalCount}문항 완성! 나머지 문항을 마무리하고 있습니다...`
+      );
+    }
+  };
+
+  // 최대 2개 청크씩 병렬 실행하여 4문항 기준 10~20초 내 고속 출제
+  if (chunks.length > 1) {
+    onStatus?.(
+      `총 ${totalCount}문항을 ${chunks.length}개 묶음으로 분할해 고속 출제하고 있습니다...`
+    );
+  }
+  const CONCURRENCY = 2;
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    const wave = chunks.slice(i, i + CONCURRENCY);
+    await Promise.all(wave.map((_, offset) => runChunk(i + offset)));
+  }
+
+  const finalItems = resultsBySlot.filter(
+    (it): it is ListeningItem => it !== null
+  );
+  if (finalItems.length === 0) {
+    throw new Error('생성된 문항 데이터가 없습니다. 파라미터를 확인하고 다시 시도해 주세요.');
+  }
+  return finalItems;
 }
 
 function buildDifficultyListeningGuide(

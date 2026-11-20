@@ -19,6 +19,7 @@ import {
   Settings2,
   AlertCircle,
   KeyRound,
+  Square,
 } from 'lucide-react';
 import {
   DifficultyLevel,
@@ -49,8 +50,10 @@ interface Step2Props {
   onChangeParams: (patch: Partial<GenerationParams>) => void;
   onBack: () => void;
   onGenerate: () => void;
+  onCancelGenerate?: () => void;
   onSkipToEditor: () => void;
   generating: boolean;
+  generateElapsedSec?: number;
   statusMessage: string;
   generateError?: string | null;
   hasApiKey?: boolean;
@@ -114,8 +117,10 @@ export const Step2Parameters: React.FC<Step2Props> = ({
   onChangeParams,
   onBack,
   onGenerate,
+  onCancelGenerate,
   onSkipToEditor,
   generating,
+  generateElapsedSec = 0,
   statusMessage,
   generateError,
   hasApiKey = true,
@@ -2116,13 +2121,18 @@ export const Step2Parameters: React.FC<Step2Props> = ({
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {generating ? (
-            <div className="flex items-center gap-2.5 text-sm font-bold text-[#09396A]">
-              <Loader2 className="w-5 h-5 animate-spin text-[#357DC7]" />
-              <span>
-                {statusMessage || 'AI가 출제 원안을 작성하고 있습니다...'}
-              </span>
+            <div className="flex items-center gap-2.5 text-sm font-bold text-[#09396A] min-w-0">
+              <Loader2 className="w-5 h-5 animate-spin text-[#357DC7] shrink-0" />
+              <div className="min-w-0">
+                <div className="truncate">
+                  {statusMessage || 'AI가 출제 원안을 작성하고 있습니다...'}
+                </div>
+                <div className="text-[11px] font-semibold text-slate-500">
+                  경과 {generateElapsedSec}초 · 2문항 단위 병렬 고속 출제 중
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-0.5">
@@ -2169,15 +2179,26 @@ export const Step2Parameters: React.FC<Step2Props> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            disabled={generating}
-            onClick={onSkipToEditor}
-            className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50"
-          >
-            <Edit3 className="w-4 h-4" />
-            직접 문항 출제 및 편집하기
-          </button>
+          {generating && onCancelGenerate ? (
+            <button
+              type="button"
+              onClick={onCancelGenerate}
+              className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl text-xs font-extrabold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              생성 중지
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onSkipToEditor}
+              className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50"
+            >
+              <Edit3 className="w-4 h-4" />
+              직접 문항 출제 및 편집하기
+            </button>
+          )}
 
           <button
             type="button"
@@ -2191,7 +2212,7 @@ export const Step2Parameters: React.FC<Step2Props> = ({
               <Sparkles className="w-4 h-4" />
             )}
             {generating
-              ? 'AI 문항 자동 출제 중...'
+              ? `AI 문항 자동 출제 중... (${generateElapsedSec}초)`
               : `✨ AI 문항 자동 출제하기 (${params.itemCount}문항)`}
           </button>
         </div>

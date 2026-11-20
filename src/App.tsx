@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import {
   GenerationParams,
@@ -120,9 +120,24 @@ export const App: React.FC = () => {
 
   const [generating, setGenerating] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [generateElapsedSec, setGenerateElapsedSec] = useState<number>(0);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [apiKeyModalSignal, setApiKeyModalSignal] = useState<number>(0);
+  const generateAbortRef = useRef<AbortController | null>(null);
   const [refiningId, setRefiningId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!generating) {
+      setGenerateElapsedSec(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setGenerateElapsedSec(0);
+    const id = window.setInterval(() => {
+      setGenerateElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [generating]);
   const [auditingAll, setAuditingAll] = useState<boolean>(false);
   const [auditProgressText, setAuditProgressText] = useState<string>('');
   const [toast, setToast] = useState<{
@@ -185,6 +200,13 @@ export const App: React.FC = () => {
     setTtsConfig((prev) => ({ ...prev, ...patch }));
   };
 
+  const handleCancelGenerate = () => {
+    if (generateAbortRef.current) {
+      generateAbortRef.current.abort();
+      generateAbortRef.current = null;
+    }
+  };
+
   const handleGenerate = async () => {
     if (!apiKey.trim()) {
       const msg =
@@ -195,15 +217,26 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (generateAbortRef.current) {
+      generateAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    generateAbortRef.current = abortController;
+
     setGenerating(true);
     setGenerateError(null);
     setStatusMessage('대구형 교육과정 성취기준 및 어휘 수준 분석 중...');
     setToast(null);
 
     try {
-      const generated = await generateListeningItems(apiKey, params, (msg) => {
-        setStatusMessage(msg);
-      });
+      const generated = await generateListeningItems(
+        apiKey,
+        params,
+        (msg) => {
+          setStatusMessage(msg);
+        },
+        abortController.signal
+      );
       revokeItemAudioUrls(items);
       const numbered = renumberItems(generated);
       setItems(numbered);
@@ -234,6 +267,9 @@ export const App: React.FC = () => {
       setGenerateError(errMsg);
       showNotice('error', errMsg, 10000);
     } finally {
+      if (generateAbortRef.current === abortController) {
+        generateAbortRef.current = null;
+      }
       setGenerating(false);
       setStatusMessage('');
     }
@@ -686,8 +722,10 @@ export const App: React.FC = () => {
             onChangeParams={handleChangeParams}
             onBack={() => setCurrentStep(1)}
             onGenerate={handleGenerate}
+            onCancelGenerate={handleCancelGenerate}
             onSkipToEditor={handleDirectCreateOrEdit}
             generating={generating}
+            generateElapsedSec={generateElapsedSec}
             statusMessage={statusMessage}
             generateError={generateError}
             hasApiKey={Boolean(apiKey.trim())}
