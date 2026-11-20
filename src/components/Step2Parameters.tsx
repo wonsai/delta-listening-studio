@@ -2130,7 +2130,7 @@ export const Step2Parameters: React.FC<Step2Props> = ({
                   {statusMessage || 'AI가 출제 원안을 작성하고 있습니다...'}
                 </div>
                 <div className="text-[11px] font-semibold text-slate-500">
-                  경과 {generateElapsedSec}초 · 2문항 단위 병렬 고속 출제 중
+                  경과 {generateElapsedSec}초 · 경량·안정 모델 우선 · 2문항 단위 순차 출제 중
                 </div>
               </div>
             </div>

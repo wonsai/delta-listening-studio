@@ -13,7 +13,12 @@ import {
   Home,
 } from 'lucide-react';
 import { DAEGU_EDU_LOGO } from '../assets/daeguEduLogo';
-import { testGeminiApiKey } from '../services/geminiService';
+import {
+  GEMINI_MODEL_OPTIONS,
+  getSavedModelPreference,
+  saveModelPreference,
+  testGeminiApiKey,
+} from '../services/geminiService';
 
 interface HeaderProps {
   currentStep: number;
@@ -47,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [draftKey, setDraftKey] = useState(apiKey);
+  const [draftModel, setDraftModel] = useState<string>(() => getSavedModelPreference());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -116,6 +122,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const openModal = () => {
     setDraftKey(apiKey);
+    setDraftModel(getSavedModelPreference());
     setTestResult(null);
     setShowKeyModal(true);
   };
@@ -123,6 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
   useEffect(() => {
     if (openApiKeyModalSignal > 0) {
       setDraftKey(apiKey);
+      setDraftModel(getSavedModelPreference());
       setTestResult(null);
       setShowKeyModal(true);
     }
@@ -131,12 +139,13 @@ export const Header: React.FC<HeaderProps> = ({
   const handleTestKey = async () => {
     setTesting(true);
     setTestResult(null);
-    const res = await testGeminiApiKey(draftKey);
+    const res = await testGeminiApiKey(draftKey, draftModel);
     setTestResult(res);
     setTesting(false);
   };
 
   const handleSaveKey = () => {
+    saveModelPreference(draftModel);
     onSaveApiKey(draftKey.trim());
     setShowKeyModal(false);
   };
@@ -511,6 +520,30 @@ export const Header: React.FC<HeaderProps> = ({
                   {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                   연결 테스트
                 </button>
+              </div>
+
+              <div className="mt-4 pt-3.5 border-t border-slate-100">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  AI 출제 모델 우선순위
+                </label>
+                <select
+                  value={draftModel}
+                  onChange={(e) => {
+                    setDraftModel(e.target.value);
+                    setTestResult(null);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#357DC7]"
+                >
+                  {GEMINI_MODEL_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {GEMINI_MODEL_OPTIONS.find((o) => o.id === draftModel)?.desc ||
+                    '선택한 모델 호출이 실패하면 사용 가능한 경량 모델로 자동 전환됩니다.'}
+                </p>
               </div>
 
               {testResult && (

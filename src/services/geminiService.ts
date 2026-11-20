@@ -32,6 +32,66 @@ import { buildItemSlotPlan } from './slotPlanner';
 import { countTranscriptWords } from './wordUtils';
 
 const STORAGE_KEY = 'delta_authoring_gemini_key';
+const MODEL_STORAGE_KEY = 'delta_authoring_gemini_model';
+
+export const GEMINI_MODEL_OPTIONS: Array<{
+  id: string;
+  label: string;
+  desc: string;
+}> = [
+  {
+    id: 'auto',
+    label: '자동 · 경량/안정 모델 우선 (추천)',
+    desc: 'Flash-Lite / 2.5 Flash 등 성공률이 높고 빠른 모델을 우선 사용합니다.',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    label: 'gemini-2.5-flash-lite (초경량 · 최고 성공률)',
+    desc: '무료·표준 한도가 넉넉하고 응답이 매우 빠릅니다.',
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    label: 'gemini-3.5-flash-lite (경량 · 고속)',
+    desc: '최신 경량 Flash-Lite 모델로 빠르고 안정적입니다.',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    label: 'gemini-2.5-flash (표준 · 균형)',
+    desc: '품질과 속도의 균형이 좋은 안정 모델입니다.',
+  },
+  {
+    id: 'gemini-2.0-flash',
+    label: 'gemini-2.0-flash (경량 안정)',
+    desc: '추론 대기 없이 바로 응답하는 안정적인 모델입니다.',
+  },
+  {
+    id: 'gemini-3.8-flash',
+    label: 'gemini-3.8-flash (고성능 · 지연/한도 주의)',
+    desc: '고난도 추론에 강하지만 무료 키에서는 지연·실패가 잦을 수 있습니다.',
+  },
+];
+
+export function getSavedModelPreference(): string {
+  try {
+    return localStorage.getItem(MODEL_STORAGE_KEY) || 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export function saveModelPreference(modelId: string): void {
+  cachedWorkingModel = null;
+  try {
+    const val = modelId.trim() || 'auto';
+    if (val === 'auto') {
+      localStorage.removeItem(MODEL_STORAGE_KEY);
+    } else {
+      localStorage.setItem(MODEL_STORAGE_KEY, val);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
 
 export function getSavedApiKey(): string {
   try {
@@ -53,17 +113,19 @@ export function saveApiKey(key: string): void {
   }
 }
 
-export const FIXED_GEMINI_MODEL = 'gemini-3.8-flash';
+export const FIXED_GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
+// 처음부터 실패율이 낮고 한도가 넉넉한 경량·안정 모델 우선 배치
 const GEMINI_MODEL_PRIORITY = [
-  'gemini-3.8-flash',
-  'gemini-3.6-flash',
-  'gemini-3-flash',
-  'gemini-3-flash-preview',
+  'gemini-2.5-flash-lite',
   'gemini-3.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash-lite',
   'gemini-2.0-flash',
+  'gemini-3-flash',
+  'gemini-3-flash-preview',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
 ];
 
 let cachedWorkingModel: string | null = null;
@@ -134,11 +196,15 @@ async function discoverAvailableModels(
         usableSet.delete(pref);
       }
     }
-    // 2) 나머지 Flash 계열 모델 추가 (버전 내림차순)
+    // 2) 나머지 Flash 계열 모델 추가 (경량 lite 우선)
     const remainingFlash = Array.from(usableSet)
       .filter((id) => /flash/i.test(id))
-      .sort()
-      .reverse();
+      .sort((a, b) => {
+        const aLite = /lite/i.test(a) ? 0 : 1;
+        const bLite = /lite/i.test(b) ? 0 : 1;
+        if (aLite !== bLite) return aLite - bLite;
+        return a.localeCompare(b);
+      });
     for (const id of remainingFlash) {
       ordered.push(id);
       usableSet.delete(id);
@@ -160,16 +226,27 @@ async function discoverAvailableModels(
 
 async function getOrderedModelCandidates(
   apiKey: string,
-  externalSignal?: AbortSignal
+  externalSignal?: AbortSignal,
+  explicitPreferredModel?: string
 ): Promise<string[]> {
   const discovered = await discoverAvailableModels(apiKey, externalSignal);
-  if (!cachedWorkingModel || !discovered.includes(cachedWorkingModel)) {
-    return discovered;
+  const preferred = (explicitPreferredModel || getSavedModelPreference()).trim();
+
+  const ordered: string[] = [];
+  const pushUnique = (id: string) => {
+    if (id && id !== 'auto' && !ordered.includes(id)) ordered.push(id);
+  };
+
+  if (preferred && preferred !== 'auto') {
+    pushUnique(preferred);
   }
-  return [
-    cachedWorkingModel,
-    ...discovered.filter((m) => m !== cachedWorkingModel),
-  ];
+  if (cachedWorkingModel && discovered.includes(cachedWorkingModel)) {
+    pushUnique(cachedWorkingModel);
+  }
+  for (const m of discovered) {
+    pushUnique(m);
+  }
+  return ordered;
 }
 
 function buildThinkingConfigForModel(
@@ -177,11 +254,11 @@ function buildThinkingConfigForModel(
   useThinking: boolean
 ): Record<string, unknown> | undefined {
   if (!useThinking) return undefined;
-  // Gemini 3.x / 4.x: 구조화 JSON(responseSchema) 대량 생성 시 LOW가 속도와 품질 균형이 최적
+  // 경량·고속 생성을 위해 추론 토큰 오버헤드를 최소화
   if (/^gemini-(?:3|4)/.test(model)) {
-    return { thinkingLevel: 'LOW' };
+    return { thinkingLevel: /lite/i.test(model) ? 'MINIMAL' : 'LOW' };
   }
-  // Gemini 2.5: thinkingLevel 대신 thinkingBudget 사용 (0으로 지연 최소화)
+  // Gemini 2.5: thinkingBudget: 0으로 지연 및 토큰 초과 방지
   if (/^gemini-2\.5/.test(model)) {
     return { thinkingBudget: 0 };
   }
@@ -468,12 +545,15 @@ async function callGeminiJson(
   throw new Error(`Gemini API 호출에 실패했습니다: ${lastError}`);
 }
 
-export async function testGeminiApiKey(apiKey: string): Promise<{ ok: boolean; message: string }> {
+export async function testGeminiApiKey(
+  apiKey: string,
+  preferredModel?: string
+): Promise<{ ok: boolean; message: string }> {
   const key = apiKey.trim();
   if (!key) return { ok: false, message: 'API 키를 입력해 주세요.' };
   try {
     let lastErr = '';
-    const candidates = await getOrderedModelCandidates(key);
+    const candidates = await getOrderedModelCandidates(key, undefined, preferredModel);
     for (const model of candidates) {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
@@ -1115,16 +1195,14 @@ ${referenceBlock}
     }
   };
 
-  // 최대 2개 청크씩 병렬 실행하여 4문항 기준 10~20초 내 고속 출제
+  // 무료/표준 키의 동시 요청(RPM) 한도 초과를 막기 위해 2문항 단위로 순차 안정 출제
   if (chunks.length > 1) {
     onStatus?.(
-      `총 ${totalCount}문항을 ${chunks.length}개 묶음으로 분할해 고속 출제하고 있습니다...`
+      `총 ${totalCount}문항을 ${chunks.length}개 묶음으로 나누어 안정적으로 출제하고 있습니다...`
     );
   }
-  const CONCURRENCY = 2;
-  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
-    const wave = chunks.slice(i, i + CONCURRENCY);
-    await Promise.all(wave.map((_, offset) => runChunk(i + offset)));
+  for (let i = 0; i < chunks.length; i++) {
+    await runChunk(i);
   }
 
   const finalItems = resultsBySlot.filter(
