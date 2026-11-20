@@ -70,11 +70,25 @@ const INITIAL_PARAMS: GenerationParams = {
   schoolName: '',
   itemCount: 4,
   questionFormatMode: 'auto',
-  questionFormats: ['gap_poster', 'short_kr', 'mcq_5'],
+  questionFormats: [
+    'ib_mcq_3',
+    'ib_multi_true',
+    'ib_speaker_match',
+    'gap_poster',
+    'short_en',
+  ],
   questionFormatCounts: {
+    ib_mcq_3: 1,
     gap_poster: 1,
-    short_kr: 1,
-    mcq_5: 2,
+    ib_multi_true: 1,
+    short_en: 1,
+  },
+  stdTypeMode: 'auto',
+  stdTypeCounts: {
+    목적: 1,
+    의견: 1,
+    숫자: 1,
+    긴응답: 1,
   },
   mcqOptionLanguage: 'auto',
   mcqEnglishSkills: getDefaultEnglishOptionSkills(),
@@ -275,12 +289,12 @@ export const App: React.FC = () => {
         const firstCountFmt = QUESTION_FORMATS.find(
           (f) => Number(params.questionFormatCounts?.[f.id] || 0) > 0
         );
-        questionFormat = firstCountFmt?.id || params.questionFormats[0] || 'short_kr';
+        questionFormat = firstCountFmt?.id || params.questionFormats[0] || 'ib_mcq_3';
       } else {
-        questionFormat = params.questionFormats[0] || 'short_kr';
+        questionFormat = params.questionFormats[0] || 'ib_mcq_3';
       }
     }
-    const isConstructed = questionFormat !== 'mcq_5';
+    const isConstructed = questionFormat !== 'mcq_5' && questionFormat !== 'ib_mcq_3';
 
     const selectedStdText =
       params.selectedStandards[0] ||
@@ -289,7 +303,15 @@ export const App: React.FC = () => {
       '[10공영1-01-01] 말이나 글에 포함된 세부 정보를 파악한다.';
     const matchedStd = allStandards.find((s) => s.text === selectedStdText);
 
+    const firstStdCountSkill =
+      params.mode === 'std' && params.stdTypeMode === 'counts' && params.stdTypeCounts
+        ? Object.keys(params.stdTypeCounts).find(
+            (k) => Number(params.stdTypeCounts[k] || 0) > 0
+          )
+        : undefined;
+
     const skill =
+      firstStdCountSkill ||
       params.selectedSkills[0] ||
       (params.mode === 'ib'
         ? matchedStd?.recommendedSkillIb || '세부 정보 파악'
@@ -328,7 +350,7 @@ export const App: React.FC = () => {
       questionPrompt: '',
       stimulusTitle: '',
       stimulusBody: '',
-      options: ['', '', '', '', ''],
+      options: questionFormat === 'ib_mcq_3' ? ['', '', ''] : ['', '', '', '', ''],
       isConstructedResponse: isConstructed,
       correctChoice: 1,
       modelAnswer: '',

@@ -176,7 +176,7 @@ const ITEM_SCHEMA = {
   properties: {
     questionFormat: {
       type: 'STRING',
-      description: 'gap_poster | short_kr | short_en | tf_justify | mcq_5 중 하나',
+      description: 'ib_mcq_3 | ib_multi_true | ib_speaker_match | gap_poster | short_en | tf_justify | ib_order | short_kr | mcq_5 중 하나',
     },
     operationMethod: { type: 'STRING' },
     operationBenefits: { type: 'STRING' },
@@ -220,21 +220,21 @@ const ITEM_SCHEMA = {
     },
     stimulusTitle: {
       type: 'STRING',
-      description: '포스터/안내문/메모/도표/요약문 상자 제목 (예: "[2026 Career Mentoring Day Notice]"). 상자가 불필요하면 빈 문자열 ""',
+      description: '포스터/안내문/메모/도표/체크표/진술문/요약문 상자 제목 (예: "[2026 Career Mentoring Day Notice]"). 상자가 불필요하면 빈 문자열 ""',
     },
     stimulusBody: {
       type: 'STRING',
-      description: '포스터 빈칸 내용, 서술형 소문항 양식, 또는 객관식 도표((A)~(E) 비교표)·요약문((A),(B) 빈칸 상자) 본문. 불필요하면 빈 문자열 ""',
+      description: '포스터·노트 빈칸([–1–]~[–3–]), 참인 진술 복수선택(A~E/A~J), 화자 매칭 표, 순서 배열 항목, 서술형 소문항 양식, 또는 객관식 도표((A)~(E) 비교표) 본문. 불필요하면 빈 문자열 ""',
     },
     options: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: '선택형(mcq_5)일 때 5개의 선택지 텍스트(번호 기호 ①~⑤ 제외, 설계표에 지정된 영어/한국어 보기 언어 및 병렬 구조 엄수). 서답형이면 빈 배열 []',
+      description: '선택형일 때 선택지 텍스트 배열 (ib_mcq_3이면 3개 A/B/C 텍스트, mcq_5이면 5개 ①~⑤ 텍스트 — 앞에 A./B./C. 또는 ①~⑤ 기호 제외, 설계표에 지정된 보기 언어 및 병렬 구조 엄수). 서답형이면 빈 배열 []',
     },
     isConstructedResponse: { type: 'BOOLEAN' },
     correctChoice: {
       type: 'INTEGER',
-      description: '선택형일 때 정답 번호 (1~5). 서답형이면 1',
+      description: '선택형일 때 정답 번호 (ib_mcq_3이면 1~3 [1=A, 2=B, 3=C], mcq_5이면 1~5). 서답형이면 1',
     },
     modelAnswer: {
       type: 'STRING',
@@ -325,10 +325,14 @@ function normalizeGeneratedItem(
 
   const rawFmt = String(raw.questionFormat || '') as QuestionFormatType;
   const validFormats: QuestionFormatType[] = [
+    'ib_mcq_3',
+    'ib_multi_true',
+    'ib_speaker_match',
     'gap_poster',
-    'short_kr',
     'short_en',
     'tf_justify',
+    'ib_order',
+    'short_kr',
     'mcq_5',
   ];
   const questionFormat: QuestionFormatType =
@@ -336,14 +340,19 @@ function normalizeGeneratedItem(
       ? 'mcq_5'
       : validFormats.includes(rawFmt)
       ? rawFmt
-      : params.questionFormats[idx % Math.max(1, params.questionFormats.length)] || 'gap_poster';
+      : params.questionFormats[idx % Math.max(1, params.questionFormats.length)] || 'ib_mcq_3';
 
-  const isConstructed = questionFormat !== 'mcq_5';
+  const isConstructed = questionFormat !== 'mcq_5' && questionFormat !== 'ib_mcq_3';
+  const optionCount = questionFormat === 'ib_mcq_3' ? 3 : 5;
 
   const rawOptions = Array.isArray(raw.options)
-    ? raw.options.map((o) => String(o || '').replace(/^[①②③④⑤1-5][.)\s]+/, '').trim())
+    ? raw.options.map((o) =>
+        String(o || '')
+          .replace(/^(?:[①②③④⑤1-5]|[A-Ea-e])[.)\s]+/, '')
+          .trim()
+      )
     : [];
-  while (rawOptions.length < 5) rawOptions.push('');
+  while (rawOptions.length < optionCount) rawOptions.push('');
 
   const rawRubrics = Array.isArray(raw.rubricRows) ? raw.rubricRows : [];
   const rubricRows: RubricRow[] = isConstructed
@@ -381,7 +390,9 @@ function normalizeGeneratedItem(
         ? params.evalPurpose
         : '정기시험 혹은 수행평가(서술형/서답형)'
       : params.mode === 'std'
-      ? '학교 영어듣기능력평가(5지선다 객관식)'
+      ? '수능형 영어듣기평가(5지선다 객관식)'
+      : questionFormat === 'ib_mcq_3'
+      ? '대구형(IB) 영어듣기 평가(3지선다 선택형)'
       : '정기시험(선택형)',
     achievementStandard: canonicalizeAchievementStandard(
       String(raw.achievementStandard || ''),
@@ -414,9 +425,9 @@ function normalizeGeneratedItem(
     questionPrompt: String(raw.questionPrompt || '').replace(/^문항\s*[:：]\s*/, '').trim(),
     stimulusTitle: String(raw.stimulusTitle || '').trim(),
     stimulusBody: String(raw.stimulusBody || '').trim(),
-    options: rawOptions.slice(0, 5),
+    options: rawOptions.slice(0, optionCount),
     isConstructedResponse: isConstructed,
-    correctChoice: Math.min(5, Math.max(1, Number(raw.correctChoice) || 1)),
+    correctChoice: Math.min(optionCount, Math.max(1, Number(raw.correctChoice) || 1)),
     modelAnswer: String(raw.modelAnswer || '').trim(),
     totalMarks: Number(raw.totalMarks) || (isConstructed ? 3 : 2),
     rubricRows,
@@ -465,7 +476,7 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
     const fallbackPool: QuestionFormatType[] =
       params.questionFormats.length > 0
         ? params.questionFormats
-        : ['gap_poster', 'short_kr', 'mcq_5'];
+        : ['ib_mcq_3', 'gap_poster', 'short_en', 'ib_multi_true', 'ib_speaker_match'];
     let fIdx = 0;
     while (formatSlots.length < count) {
       formatSlots.push(fallbackPool[fIdx % fallbackPool.length]);
@@ -475,35 +486,84 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
     const pool: QuestionFormatType[] =
       params.questionFormats.length > 0
         ? params.questionFormats
-        : ['gap_poster', 'short_kr', 'mcq_5'];
+        : ['ib_mcq_3', 'gap_poster', 'short_en', 'ib_multi_true', 'ib_speaker_match'];
     for (let i = 0; i < count; i++) {
       formatSlots.push(pool[i % pool.length]);
     }
   }
 
-  // 정기고사 원안 표준 순서(선택형 → 단답형 → 서술형)에 맞춰 슬롯 정렬
+  // 정기고사/IB 원안 표준 순서(선택형 → 복수선택/매칭 → 빈칸·단답 → 순서·서술형)에 맞춰 슬롯 정렬
   const formatPriority: Record<QuestionFormatType, number> = {
     mcq_5: 0,
-    gap_poster: 1,
-    short_en: 2,
-    short_kr: 3,
-    tf_justify: 4,
+    ib_mcq_3: 1,
+    ib_multi_true: 2,
+    ib_speaker_match: 3,
+    gap_poster: 4,
+    short_en: 5,
+    ib_order: 6,
+    tf_justify: 7,
+    short_kr: 8,
   };
   formatSlots.sort((a, b) => formatPriority[a] - formatPriority[b]);
 
-  // 2) 성취기준 및 성취기준 맞춤 평가기능(skill) · 수행지시어 매칭
+  // 2) 성취기준 및 평가기능(skill) · 수행지시어 매칭
   const allModeSkills = params.mode === 'ib' ? IB_SKILLS : STD_SKILLS;
+  const csatOrderMap = new Map(STD_SKILLS.map((sk, idx) => [sk.value, idx]));
   const usedAutoSkills = new Set<string>();
 
-  const preliminarySlots = Array.from({ length: count }, (_, i) => {
-    const stdItem = fallbackStandards[i % fallbackStandards.length];
-    const standardText =
-      stdItem?.text ||
-      params.selectedStandards[i % Math.max(1, params.selectedStandards.length)] ||
-      '';
+  // 기존형(수능 영어 듣기)일 때 유형별 개수 지정 또는 수능 1~17번 공식 순서 정렬 지원
+  let stdPlannedSkills: string[] | null = null;
+  if (params.mode === 'std') {
+    if (params.stdTypeMode === 'counts' && params.stdTypeCounts) {
+      const expanded: string[] = [];
+      for (const sk of STD_SKILLS) {
+        const n = Number(params.stdTypeCounts[sk.value] || 0);
+        for (let k = 0; k < n && expanded.length < count; k++) {
+          expanded.push(sk.value);
+        }
+      }
+      if (expanded.length > 0) {
+        const fallbackPool =
+          params.selectedSkills.length > 0
+            ? params.selectedSkills
+            : STD_SKILLS.map((s) => s.value);
+        let pIdx = 0;
+        while (expanded.length < count) {
+          expanded.push(fallbackPool[pIdx % fallbackPool.length]);
+          pIdx++;
+        }
+        expanded.sort(
+          (a, b) => (csatOrderMap.get(a) ?? 99) - (csatOrderMap.get(b) ?? 99)
+        );
+        stdPlannedSkills = expanded;
+      }
+    } else if (params.selectedSkills.length > 0) {
+      const sortedSelected = [...params.selectedSkills].sort(
+        (a, b) => (csatOrderMap.get(a) ?? 99) - (csatOrderMap.get(b) ?? 99)
+      );
+      stdPlannedSkills = Array.from(
+        { length: count },
+        (_, i) => sortedSelected[i % sortedSelected.length]
+      );
+    }
+  }
 
+  let preliminarySlots = Array.from({ length: count }, (_, i) => {
+    let stdItem = fallbackStandards[i % fallbackStandards.length];
     let skill: string;
-    if (params.selectedSkills.length > 0) {
+
+    if (params.mode === 'std' && stdPlannedSkills) {
+      skill = stdPlannedSkills[i];
+      // 교사가 성취기준을 직접 고정하지 않은 경우, 해당 수능 유형과 가장 잘 맞는 성취기준을 우선 매칭
+      const matchedStd =
+        fallbackStandards.find((s) => s.recommendedSkillStd === skill) ||
+        fallbackStandards.find(
+          (s) =>
+            s.directive ===
+            (STD_SKILLS.find((sk) => sk.value === skill)?.directive || '')
+        );
+      if (matchedStd) stdItem = matchedStd;
+    } else if (params.selectedSkills.length > 0) {
       skill = params.selectedSkills[i % params.selectedSkills.length];
     } else {
       // 자동 배정: 해당 문항 성취기준에 직결되는 추천 기능을 우선 배정하되, 다문항 시 중복 최소화
@@ -526,6 +586,11 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
       usedAutoSkills.add(skill);
     }
 
+    const standardText =
+      stdItem?.text ||
+      params.selectedStandards[i % Math.max(1, params.selectedStandards.length)] ||
+      '';
+
     const matchedSkillMeta = allModeSkills.find((s) => s.value === skill);
     const directive =
       params.selectedDirective ||
@@ -542,6 +607,14 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
     };
   });
 
+  // 기존형(수능) 자동 배정 시에도 1번(목적) → 16~17번(복합) 수능 공식 순서로 정렬
+  if (params.mode === 'std') {
+    preliminarySlots = preliminarySlots.sort(
+      (a, b) =>
+        (csatOrderMap.get(a.skill) ?? 99) - (csatOrderMap.get(b.skill) ?? 99)
+    );
+  }
+
   // 3) 담화·대화 유형 슬롯 배열 구성 (문항 수 및 문항 유형 특성 연동)
   const autoTextCycle = [
     '대화문',
@@ -555,15 +628,20 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
   ];
 
   const dialogueRequiredSkills = new Set([
-    '응답',
+    '짧은응답',
+    '긴응답',
     '듣고 응답하기',
-    '관계',
-    '할일',
-    '도표',
     '의견',
+    '할일',
+    '숫자',
+    '이유',
+    '언급안됨',
+    '도표',
   ]);
   const monologuePreferredSkills = new Set([
     '목적',
+    '요지',
+    '내용일치',
     '복합(주제+언급안됨)',
   ]);
 
@@ -571,15 +649,27 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
   if (params.textTypeMode === 'counts' && params.textTypeCounts) {
     const remainingCounts: Record<string, number> = { ...params.textTypeCounts };
 
-    // 포스터 빈칸 완성형(gap_poster)이 있고 안내방송/강연이 지정되어 있다면 우선 매칭하여 자연스러움 극대화
+    // 포스터 빈칸 완성형(gap_poster) / 화자 매칭형(ib_speaker_match) / 대화 필수 수능 유형 우선 매칭
     for (let i = 0; i < count; i++) {
-      if (formatSlots[i] === 'gap_poster') {
+      const fmt = preliminarySlots[i].format;
+      if (fmt === 'gap_poster') {
         if ((remainingCounts['담화문(안내 방송)'] || 0) > 0) {
           textSlots[i] = '담화문(안내 방송)';
           remainingCounts['담화문(안내 방송)']--;
         } else if ((remainingCounts['담화문(강연·발표)'] || 0) > 0) {
           textSlots[i] = '담화문(강연·발표)';
           remainingCounts['담화문(강연·발표)']--;
+        }
+      } else if (fmt === 'ib_speaker_match') {
+        if ((remainingCounts['토론·의견 교환'] || 0) > 0) {
+          textSlots[i] = '토론·의견 교환';
+          remainingCounts['토론·의견 교환']--;
+        } else if ((remainingCounts['인터뷰'] || 0) > 0) {
+          textSlots[i] = '인터뷰';
+          remainingCounts['인터뷰']--;
+        } else if ((remainingCounts['대화문'] || 0) > 0) {
+          textSlots[i] = '대화문';
+          remainingCounts['대화문']--;
         }
       } else if (
         dialogueRequiredSkills.has(preliminarySlots[i].skill) &&
@@ -611,12 +701,16 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
     // 자동 균형 배정: 문항 형식·평가 기능 특성과 인덱스에 맞춰 대화문·담화문이 어색하지 않게 배정
     let autoIdx = 0;
     for (let i = 0; i < count; i++) {
-      const fmt = formatSlots[i];
+      const fmt = preliminarySlots[i].format;
       const sk = preliminarySlots[i].skill;
       if (sk === '상황') {
         textSlots[i] = '담화문(상황 설명)';
+      } else if (fmt === 'ib_speaker_match') {
+        textSlots[i] = i % 2 === 0 ? '토론·의견 교환' : '인터뷰';
       } else if (dialogueRequiredSkills.has(sk)) {
         textSlots[i] = '대화문';
+      } else if (sk === '복합(주제+언급안됨)') {
+        textSlots[i] = '담화문(강연·발표)';
       } else if (fmt === 'gap_poster' || monologuePreferredSkills.has(sk)) {
         textSlots[i] = i % 2 === 0 ? '담화문(안내 방송)' : '담화문(강연·발표)';
       } else if (fmt === 'short_kr' && i % 2 === 1) {
@@ -631,7 +725,7 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
     }
   }
 
-  // 4) 객관식 보기(①~⑤) 언어 및 발문 언어 결정 (기출 유형별 매핑 반영)
+  // 4) 객관식 보기(①~⑤ 또는 IB A/B/C) 언어 및 발문 언어 결정
   const optionMode = params.mcqOptionLanguage || 'auto';
   const promptMode = params.mcqPromptLanguage || 'ko';
   const englishSkillSet = new Set(
@@ -639,18 +733,26 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
   );
 
   return preliminarySlots.map((p, i) => {
-    const mcqOptionLang: 'en' | 'ko' =
-      optionMode === 'en'
-        ? 'en'
-        : optionMode === 'ko'
+    const isIb3 = p.format === 'ib_mcq_3';
+    const mcqOptionLang: 'en' | 'ko' = isIb3
+      ? optionMode === 'ko'
         ? 'ko'
-        : p.matchedSkillMeta
-        ? englishSkillSet.has(p.matchedSkillMeta.value)
-          ? 'en'
-          : 'ko'
-        : 'ko';
+        : 'en'
+      : optionMode === 'en'
+      ? 'en'
+      : optionMode === 'ko'
+      ? 'ko'
+      : p.matchedSkillMeta
+      ? englishSkillSet.has(p.matchedSkillMeta.value)
+        ? 'en'
+        : 'ko'
+      : 'ko';
 
-    const mcqOptionStyleHint = p.matchedSkillMeta
+    const mcqOptionStyleHint = isIb3
+      ? mcqOptionLang === 'en'
+        ? 'IB Paper 2 표준 A/B/C 3지선다 영어 선택지 3개 (문장 완성형 또는 간결한 구/절, 병렬 구조 엄수)'
+        : 'IB 3지선다 한국어 선택지 3개 (문장 구조와 길이가 균일한 병렬 구조)'
+      : p.matchedSkillMeta
       ? mcqOptionLang === 'en'
         ? p.matchedSkillMeta.optionStyleHintEn
         : p.matchedSkillMeta.optionStyleHintKo
@@ -667,7 +769,7 @@ function buildItemSlotPlan(params: GenerationParams): ItemSlotSpec[] {
       textType: textSlots[i],
       mcqOptionLang,
       mcqOptionStyleHint,
-      mcqPromptLang: promptMode,
+      mcqPromptLang: isIb3 && promptMode === 'en' ? 'en' : promptMode,
     };
   });
 }
@@ -698,21 +800,29 @@ export async function generateListeningItems(
         slot.format;
       const ttLabel =
         TEXT_TYPES.find((t) => t.id === slot.textType)?.label || slot.textType;
-      const mcqSpec =
-        slot.format === 'mcq_5'
-          ? ` | 발문언어=[${
-              slot.mcqPromptLang === 'en' ? '영어(English) 발문' : '한국어 발문'
-            }] | 보기(①~⑤)언어=[${
-              slot.mcqOptionLang === 'en'
-                ? '반드시 영어(English·숫자·기호) 보기'
-                : '반드시 한국어 보기'
-            } — 형식: ${slot.mcqOptionStyleHint}]`
-          : '';
-      return `  * ${slot.itemNo}번 문항: 문항형식=[${slot.format} (${fmtLabel})] | 담화·대화유형=[${ttLabel}] | 성취기준=[${slot.standardText}] | 평가기능=${
-        params.selectedSkills.length === 0
-          ? `[성취기준 맞춤 자동선택 — 추천: ${slot.skill}]`
-          : `[${slot.skill}]`
-      } | 수행지시어=[${slot.directive}]${mcqSpec}`;
+      const stdMeta =
+        params.mode === 'std'
+          ? STD_SKILLS.find((s) => s.value === slot.skill)
+          : undefined;
+      const skillTag = stdMeta
+        ? `[수능 ${stdMeta.csatNo} ${stdMeta.label || stdMeta.value}${
+            stdMeta.csatPart === '간접 말하기' ? ' · 간접 말하기' : ''
+          }]`
+        : params.selectedSkills.length === 0
+        ? `[성취기준 맞춤 자동선택 — 추천: ${slot.skill}]`
+        : `[${slot.skill}]`;
+      const isMcq = slot.format === 'mcq_5' || slot.format === 'ib_mcq_3';
+      const choiceTag = slot.format === 'ib_mcq_3' ? '보기(A~C 3지선다)' : '보기(①~⑤ 5지선다)';
+      const mcqSpec = isMcq
+        ? ` | 발문언어=[${
+            slot.mcqPromptLang === 'en' ? '영어(English) 발문' : '한국어 발문'
+          }] | ${choiceTag}언어=[${
+            slot.mcqOptionLang === 'en'
+              ? '반드시 영어(English·숫자·기호) 보기'
+              : '반드시 한국어 보기'
+          } — 형식: ${slot.mcqOptionStyleHint}]`
+        : '';
+      return `  * ${slot.itemNo}번 문항: 문항형식=[${slot.format} (${fmtLabel})] | 담화·대화유형=[${ttLabel}] | 성취기준=[${slot.standardText}] | 평가기능=${skillTag} | 수행지시어=[${slot.directive}]${mcqSpec}`;
     })
     .join('\n');
 
@@ -722,20 +832,20 @@ export async function generateListeningItems(
   );
   const modeEnSkillNames = allModeSkills
     .filter((s) => activeEnSkillSet.has(s.value))
-    .map((s) => s.value);
+    .map((s) => (s.csatNo ? `${s.csatNo} ${s.label || s.value}` : s.value));
   const modeKoSkillNames = allModeSkills
     .filter((s) => !activeEnSkillSet.has(s.value))
-    .map((s) => s.value);
+    .map((s) => (s.csatNo ? `${s.csatNo} ${s.label || s.value}` : s.value));
   const mcqOptionPolicySummary =
     (params.mcqOptionLanguage || 'auto') === 'en'
-      ? '모든 객관식(mcq_5) 문항의 ①~⑤ 선택지를 반드시 영어(English)로 통일하여 작성 (선택지에 한글 혼용 금지)'
+      ? '모든 객관식(mcq_5 / ib_mcq_3) 문항의 선택지를 반드시 영어(English)로 통일하여 작성 (선택지에 한글 혼용 금지)'
       : (params.mcqOptionLanguage || 'auto') === 'ko'
-      ? '모든 객관식(mcq_5) 문항의 ①~⑤ 선택지를 반드시 한국어로 통일하여 작성'
-      : `기출 유형별 자동 적용 — 영어(숫자·기호) 보기 유형[${
+      ? '모든 객관식(mcq_5 / ib_mcq_3) 문항의 선택지를 반드시 한국어로 통일하여 작성'
+      : `기출 유형별 자동 적용 — IB 3지선다(ib_mcq_3)는 기본 영어 A/B/C 보기, 5지선다(mcq_5) 중 영어(숫자·기호) 보기 유형[${
           modeEnSkillNames.join(', ') || '없음'
-        }]은 반드시 영어(또는 숫자·도표 기호) 선택지 5개로 작성하고, 한국어 보기 유형[${
+        }]은 반드시 영어(또는 숫자·도표 기호) 선택지로 작성하고, 한국어 보기 유형[${
           modeKoSkillNames.join(', ') || '없음'
-        }]은 반드시 한국어 선택지 5개로 작성`;
+        }]은 반드시 한국어 선택지로 작성`;
 
   const directiveGuide = params.selectedDirective
     ? `반드시 지정된 수행지시어 「${params.selectedDirective}」(${
@@ -781,15 +891,15 @@ export async function generateListeningItems(
 - 따라서 학생이 보게 되는 **발문(questionPrompt), 안내문/포스터(stimulusTitle·stimulusBody), 선택지(options)** 어디에도 읽기 평가 표현을 절대 쓰지 마세요:
   * ❌ 절대 금지 표현: "대본을 보고", "대본에서 찾아 쓰시오", "대본의 내용을 참고하여", "지문을 보고/읽고", "지문에서 찾아", "윗글", "다음 글을 읽고", "본문에서", "밑줄 친", "그대로 옮겨 쓰시오", "Read the transcript/script/dialogue/passage", "Find in the script"
   * ✅ 올바른 표현: "대화를 듣고, ...", "다음 안내 방송을 듣고, ...", "다음 음성 메시지를 듣고, ...", "들은 내용을 바탕으로 ...", "Listen to the dialogue/announcement and ..."
-- 서답형 문항(gap_poster, short_kr, short_en, tf_justify)은 학생이 귀로 듣고 노트테이킹·기억할 수 있는 핵심 정보(날짜, 장소, 행동, 의도, 이유 등)만 물어야 하며, 철자가 지나치게 까다로운 저빈도 고유명사나 긴 원문 문장 그대로 받아쓰기를 요구하지 마세요.
+- 서답형 문항(ib_multi_true, ib_speaker_match, gap_poster, short_en, tf_justify, ib_order, short_kr)은 학생이 귀로 듣고 노트테이킹·기억할 수 있는 핵심 정보(날짜, 장소, 행동, 의도, 이유, 관점 등)만 물어야 하며, 철자가 지나치게 까다로운 저빈도 고유명사나 긴 원문 문장 그대로 받아쓰기를 요구하지 마세요.
 
 [핵심 출제 원칙]
 1. 화자 표기 및 담화·대화 유형 엄수:
    - 영어 대본(transcript)의 모든 발화 줄은 반드시 "W: " (여자) 또는 "M: " (남자)로 시작해야 합니다.
    - 각 문항에 지정된 [담화·대화유형]을 엄격히 따르세요:
-     * 대화문 / 인터뷰 / 토론·의견 교환: M과 W 두 화자가 자연스럽게 6~10턴 주고받는 구어체 대화로 작성합니다.
-     * 담화문(안내 방송) / 담화문(음성 메시지) / 담화문(강연·발표): 단독 화자(W: 또는 M: 중 1명, 문항 간 성별 교차)의 완결된 담화문으로 작성합니다.
-2. 어휘 수·어휘 수준 및 난이도 기준 엄수 (2022 개정 [별표 3] 반영):
+     * 대화문 / 인터뷰 / 토론·의견 교환: M과 W 두 화자가 자연스럽게 6~10턴 주고받는 구어체 대화로 작성합니다 (수능 11~12번 짧은응답은 3~4턴, 13~14번 긴응답은 7~10턴).
+     * 담화문(안내 방송) / 담화문(음성 메시지) / 담화문(강연·발표) / 담화문(상황 설명): 단독 화자(W: 또는 M: 중 1명, 문항 간 성별 교차)의 완결된 담화문으로 작성합니다.
+2. 어휘 수·어휘 수준 및 난이도 기준 엄수 (2022 개정 영어과 교육과정 [별표 3] 반영):
    - 각 문항 대본(transcript)의 영어 단어 수는 화자 기호(W:, M:)를 제외하고 목표 단어 수인 **약 ${params.targetWordCount}단어 (허용 범위: ${Math.max(45, Math.round(params.targetWordCount * 0.88))}~${Math.round(params.targetWordCount * 1.12)}단어)**를 정확히 맞추세요.
    - 어휘 수준: ${vocabMeta.label}${
      subjectMeta
@@ -798,28 +908,54 @@ export async function generateListeningItems(
    } — ${vocabMeta.promptGuide}
    - 난이도 세부 지침(${params.difficulty}): ${difficultyGuide}
    - 성취기준 표기: 각 문항의 achievementStandard 필드는 반드시 설계표에 지정된 2022 개정 교육과정 성취기준 원문([코드] 문장)을 글자 하나 바꾸지 않고 그대로 기재하세요.
-3. 문항 형식별 필수 구성요소(자료집 표준 서식 준수):
-   - gap_poster (안내문·포스터 빈칸 완성형):
-     * stimulusTitle에 "[2026 ... Notice]" 등 제목 작성
-     * stimulusBody에 Date, Place, How to Sign Up 등 항목과 "(   1   )", "(   2   )", "(   3   )" 형태의 빈칸 2~3개 구성 (학생이 듣고 적을 수 있는 1~2단어 친숙한 영어 어구로 정답 설계, 패러프레이징 활용)
-     * modelAnswer에 "(1) ...\\n(2) ...\\n(3) ..." 작성 및 관사·복수형 허용 범위 병기
-     * rubricRows에 3점/2점/1점/0점의 4단계 세부 채점 기준 작성 (핵심 의미 전달 중심, 경미한 철자 오류 허용 여부 명시, 최고 점수는 totalMarks와 일치)
-   - short_kr (우리말 의도·이유·핵심 서술형):
-     * stimulusBody에 "(1) 화자의 의도(요청 사항):\\n(2) 요청하게 된 이유:" 등 구체적 답안 작성 틀 제시
-     * modelAnswer에 각 소항목별 명확한 우리말 모범답안 제시
-     * rubricRows에 4점/2점/1점/0점(또는 3점/2점/1점/0점) 다단계 부분점수 채점 기준표 작성 (최고 점수는 totalMarks와 일치)
-   - short_en (영어 단답·요약형) / tf_justify (T/F 판별 및 근거 서술형):
-     * stimulusBody에 요약문 틀 또는 T/F 진술문과 근거 작성란 제시 + 다단계 채점 기준표 작성 (들어서 파악 가능한 핵심 정보 중심)
+3. 문항 형식별 필수 구성요소 (IB English B Paper 2 · 대구형 DELTA 샘플 · 수능 영어 듣기 공식 규격 준수):
+   [A. IB Paper 2 Listening 공식 핵심 유형 5종]
+   - ib_mcq_3 (IB 3지선다 선택형 — Choose the correct answer):
+     * IB Paper 2 표준에 따라 options 배열에 **정확히 3개의 선택지**(A, B, C에 해당, 앞에 A./B./C. 기호는 붙이지 말 것)를 작성하고 correctChoice는 1~3(1=A, 2=B, 3=C)으로 지정하세요.
+     * questionPrompt는 "Choose the correct answer." 안내와 함께 간결한 질문 또는 문장 완성형 줄기(예: "The speaker explains that the new schedule...")를 제시하세요.
+     * 3개 선지는 문법적 병렬 구조와 유사한 길이를 유지하며, 단순 어휘 일치가 아닌 패러프레이징·함축 추론을 평가하도록 오답 매력도를 높이세요.
+   - ib_multi_true (IB 참인 진술 복수 선택형 — Choose the true statements):
+     * questionPrompt에 "Choose the two [또는 four/five] true statements."(또는 한국어 병기)를 명확히 지시하세요.
+     * stimulusTitle에 "[True Statements]" 등 제목을 쓰고, stimulusBody에 A.~E.(참 2개) 또는 A.~H./A.~J.(참 4~5개)의 영문 진술문 목록을 "[  ] A. ..." 형태로 제시하세요.
+     * modelAnswer에 정답 알파벳만 명확히 기재(예: "B, D" 또는 "A, C, E, G")하고, rubricRows에 맞춘 개수당 1점 기준의 부분점수 채점 기준표(최고 점수는 totalMarks와 일치, 초과 선택 감점 유의사항 포함)를 작성하세요.
+   - ib_speaker_match (IB 화자·관점 매칭 체크표 — Whose opinion / Matching):
+     * 반드시 두 화자(M, W — 대본에 이름 또는 역할 명시)가 의견·관점·경험을 나누는 대화·인터뷰·토론으로 대본을 작성하세요.
+     * questionPrompt에 "Tick [✓] one correct option for each statement." 등 지시문을 쓰고, stimulusTitle에 "[Whose opinion is it?]" 등 제목을 작성하세요.
+     * stimulusBody에 3~4개 진술문과 열 구분 표(예: "Statement | Speaker A (M) | Speaker B (W) | Both"와 각 행)를 제시하세요.
+     * modelAnswer에 각 번호별 정답 화자(예: "(1) Speaker A  (2) Both  (3) Speaker B")를 기재하고 rubricRows에 항목당 1점 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
+   - gap_poster (IB·대구형 노트·안내문·포스터·표 빈칸 완성형):
+     * questionPrompt에 IB 3단어 제한 규칙("Complete the following gaps. Use no more than three words for each gap." 또는 한국어 병기)을 명시하세요.
+     * stimulusTitle에 "[2026 ... Notice / Notes]" 등 제목을 쓰고, stimulusBody에 항목별 메모·안내문·비교표와 "[–1–]", "[–2–]", "[–3–]" 형태의 빈칸 3개를 구성하세요 (학생이 귀로 듣고 노트테이킹 가능한 친숙한 영어 어구로 정답 설계, 패러프레이징 활용).
+     * modelAnswer에 IB Markscheme 표기법으로 선택 허용 단어는 괄호(), 대체 정답은 슬래시(/)로 병기하세요 (예: "(1) (school) auditorium / main hall\\n(2) (online) form\\n(3) bring one question").
+     * rubricRows에 3점/2점/1점/0점의 4단계 세부 채점 기준 작성 (최고 점수는 totalMarks와 일치, 3단어 초과 시 오답 처리, 의미 전달을 해치지 않는 경미한 철자 오류 허용 여부 명시).
+   - short_en (IB 영어 단답형 — Answer the following questions):
+     * questionPrompt에 "Answer the following questions."(또는 한국어 병기)를 쓰고, stimulusBody에 2~3개의 구체적 Wh-질문("(1) ...?\\n(2) ...?")을 제시하세요.
+     * modelAnswer에 각 소문항별 IB Markscheme 스타일 모범답안(Accept / Do not accept 및 괄호 허용 어구 병기)을 작성하고, rubricRows에 다단계 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
+   [B. 대구형 IB 확장(DELTA 샘플) · 현장지원단 자료집 유형]
+   - tf_justify (진위(T/F)·동의 판별 및 근거 서술형):
+     * stimulusTitle에 "[True / False & Justification]" 등 제목을 쓰고, stimulusBody에 2~3개의 진술문과 "(True / False) — Justification:" 작성란을 제시하세요.
+     * modelAnswer에 각 문항의 T/F 판정과 대본 기반 핵심 근거(Justification)를 함께 제시하고, rubricRows에 판정+근거 결합 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
+   - ib_order (순서 배열형 — Put the events/steps in order):
+     * stimulusTitle에 "[Order the Events / Steps]" 등 제목을 쓰고, stimulusBody에 대본 속 사건·절차 4~5개를 무작위 순서로 섞어 "(A) ...\\n(B) ...\\n(C) ...\\n(D) ..." 형태로 제시하세요.
+     * modelAnswer에 올바른 순서(예: "(C) → (A) → (D) → (B)")를 제시하고, rubricRows에 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
+   - short_kr (대구형 우리말 의도·이유·함축 서술형):
+     * stimulusBody에 "(1) 화자의 의도(요청 사항):\\n(2) 요청하게 된 이유:" 등 구체적 우리말 답안 작성 틀을 제시하세요.
+     * modelAnswer에 각 소항목별 명확한 우리말 모범답안을 제시하고, rubricRows에 4점/2점/1점/0점(또는 3점/2점/1점/0점) 다단계 부분점수 채점 기준표(최고 점수는 totalMarks와 일치)를 작성하세요.
+   [C. 5지선다 객관식 — 수능 영어 듣기 1~17번 & 대구 C형]
    - mcq_5 (5지선다 선택형):
-     * 각 문항의 설계표에 명시된 [발문언어]와 [보기(①~⑤)언어] 및 유형별 형식을 100% 엄수하여 options 배열에 5개의 선택지를 작성하세요 (앞에 ①~⑤ 기호는 붙이지 마세요).
-     * [반드시 영어(English·숫자·기호) 보기]로 지정된 문항은 options 배열의 5개 선택지를 반드시 영어(숫자 유형은 금액·시각 표기, 도표 유형은 "(A)"~"(E)")로만 작성하며, 선택지 안에 한글 설명을 절대 섞지 마세요.
+     * 각 문항의 설계표에 명시된 [발문언어]와 [보기(①~⑤)언어] 및 수능 유형별 형식을 100% 엄수하여 options 배열에 5개의 선택지를 작성하세요 (앞에 ①~⑤ 기호는 붙이지 마세요).
+     * [반드시 영어(English·숫자·기호) 보기]로 지정된 문항은 options 배열의 5개 선택지를 반드시 영어(숫자 유형은 금액 표기, 도표 유형은 "(A)"~"(E)")로만 작성하며 한글 설명을 절대 섞지 마세요.
      * [반드시 한국어 보기]로 지정된 문항은 options 배열의 5개 선택지를 어미와 문장 구조가 균일한 자연스러운 한국어로 작성하세요.
-     * 유형별 필수 대본·문항지 구조 규칙:
-       - 「응답」 / 「듣고 응답하기」: 대본(transcript)은 두 화자(M, W)의 대화 중 응답 직전 상대방의 마지막 발화에서 끝나야 하며(정답 응답을 대본에 미리 포함하지 말 것), options에 이어질 자연스러운 응답 5개를 제시하세요.
-       - 「상황」: 단독 화자(W: 또는 M:)가 두 인물의 상황을 영어로 설명하고 마지막 문장을 반드시 "In this situation, what would [인물 A] most likely say to [인물 B]?"로 끝맺은 뒤, options에 인물 A의 발화 5개를 제시하세요.
-       - 「도표」: stimulusTitle과 stimulusBody에 (A)~(E) 5개 후보 항목과 4개 조건 열을 갖춘 영문 표를 작성하고, options는 ["(A)", "(B)", "(C)", "(D)", "(E)"]로 구성하세요.
-       - 「핵심 내용 요약」(영어 보기 객관식): stimulusTitle·stimulusBody에 (A), (B) 빈칸이 있는 1~2문장 영어 요약문을 제시하고 options는 "(A) 단어 — (B) 단어" 쌍 5개로 구성하세요.
-     * 정기고사 선지 배열 원칙: 5개 선택지는 문법적 병렬 구조를 유지하고, 선택지 길이에 따라 짧은 것에서 긴 순서로 배열하되 숫자·시각·도표 등 논리적 순서가 있는 경우 오름차순으로 배열하세요.
+     * 수능 1~17번 유형별 필수 대본·문항지 구조 규칙:
+       - 「1번 목적 / 3번 요지 / 9번 내용일치」: 단독 화자 담화문. 1번은 "~하려고", 3번은 완결된 주장 평서문, 9번은 세부 사실 평서문 5개.
+       - 「2번 의견 / 5번 할일 / 7번 이유 / 8번 언급안됨」: M과 W의 자연스러운 대화문. 5번은 "~하기", 7번은 "~해서", 8번은 간결한 명사구 5개.
+       - 「6번 숫자(지불할 금액)」: 단가·수량·할인율(예: 10% off / membership discount)이 결합된 대화문. options는 작은 금액부터 오름차순 5개(예: "$36", "$40", "$45", "$48", "$54")이며 산술 계산이 100% 정확해야 함!
+       - 「10번 도표」: stimulusTitle과 stimulusBody에 (A)~(E) 5개 후보 모델과 4개 조건 열을 갖춘 영문 표를 작성하고, 두 화자가 조건을 하나씩 소거해 유일한 1개를 선택하는 대화를 작성하며 options는 ["(A)", "(B)", "(C)", "(D)", "(E)"]로 구성하세요.
+       - 「11~12번 짧은응답」: M과 W의 3~4턴 짧은 대화로, 반드시 응답 직전 상대방의 마지막 발화에서 대본을 종료(정답 응답을 대본에 포함 금지)하고 options에 영어 구어체 응답 5개 제시.
+       - 「13~14번 긴응답」: M과 W의 7~10턴 긴 대화로, 역시 응답 직전 상대방의 마지막 발화에서 대본을 종료하고 맥락을 종합한 영어 응답 5개 제시.
+       - 「15번 상황」: 단독 화자(W: 또는 M:)가 두 인물의 상황을 영어로 설명하고 마지막 문장을 반드시 "In this situation, what would [인물 A] most likely say to [인물 B]?"로 끝맺은 뒤, options에 인물 A의 영어 발화 5개 제시.
+       - 「16~17번 복합(주제+언급안됨)」: 단독 화자의 비교적 긴 강연·설명 담화. options에 영어 주제 명사구 5개(16번형) 또는 언급되지 않은 영어 항목 명사 5개(17번형) 제시.
+     * 정기고사 선지 배열 원칙: 5개 선택지는 문법적 병렬 구조를 유지하고, 선택지 길이에 따라 짧은 것에서 긴 순서로 배열하되 숫자·금액·도표 등 논리적 순서가 있는 경우 오름차순으로 배열하세요.
      * 정답이 대본의 특정 문장 하나만 들으면 너무 쉽게 풀리지 않도록 맥락적 단서와 패러프레이징을 활용하고, 오답 매력도를 높이세요.
 4. 제출 전 자가 무결성 검증(반드시 내부적으로 점검 후 출력):
    - 모든 문항의 발문·상자에 "대본/지문/윗글/읽고/찾아 쓰시오/transcript/passage"가 단 한 번도 들어가지 않았는가?
@@ -830,8 +966,8 @@ export async function generateListeningItems(
 
 - 평가 체제: ${
     params.mode === 'ib'
-      ? '대구형 영어듣기 평가 (IB·사고력·과정중심 서답형 및 핵심역량 선택형)'
-      : '기존 영어듣기능력평가 유형 (전국 시도교육청 공동 주관 스타일 100% 5지선다 객관식)'
+      ? '대구형(IB) 영어듣기 평가 (IB English B Paper 2 공식 유형 + DELTA 샘플 · 현장지원단 자료집 유형)'
+      : '기존 영어듣기 평가 (대학수학능력시험 영어 듣기 1~17번 공식 유형 · 100% 5지선다 객관식)'
   }
 - 학교급 / 학년 / 과목: ${params.schoolLevel}등학교 ${params.grade} / ${params.subject}
 - 평가 목적: ${params.evalPurpose}
@@ -839,14 +975,20 @@ export async function generateListeningItems(
 ${formatDescriptions}
 - [필수 준수] 1번~${params.itemCount}번 문항별 배정 설계표:
 ${slotBlueprintLines}
-- 객관식(5지선다) 보기 및 발문 언어 원칙: ${mcqOptionPolicySummary} / 발문 언어: ${
+- 객관식 보기 및 발문 언어 원칙: ${mcqOptionPolicySummary} / 발문 언어: ${
     (params.mcqPromptLanguage || 'ko') === 'en'
       ? '영어(English) 발문'
       : '한국어 발문 (기출·정기고사 표준)'
   }
 - 평가 기능(문항 유형) 배정 원칙: ${
-    params.selectedSkills.length === 0
-      ? '교사가 [성취기준 맞춤 자동 배정]을 선택했습니다. 각 문항에 배정된 성취기준을 가장 타당하게 평가할 수 있는 평가 기능(skill)을 설계표의 추천 유형을 참고하여 정확히 선택해 출제하세요.'
+    params.mode === 'std'
+      ? params.stdTypeMode === 'counts'
+        ? '교사가 수능 유형별 문항 개수를 직접 지정했습니다. 설계표에 배정된 수능 문항 번호별 유형과 대본·보기 규격을 정확히 준수하세요.'
+        : params.selectedSkills.length === 0
+        ? '교사가 수능 유형 자동 균형 배정을 선택했습니다. 설계표에 배정된 수능 1~17번 유형 순서와 규격을 정확히 준수하세요.'
+        : `교사가 선택한 수능 유형(${params.selectedSkills.join(', ')})을 설계표 순서에 맞추어 정확히 출제하세요.`
+      : params.selectedSkills.length === 0
+      ? '교사가 [성취기준 맞춤 자동 배정]을 선택했습니다. 각 문항에 배정된 성취기준과 대구형(IB) 문항 형식에 가장 타당한 평가 기능(skill)을 설계표의 추천 유형을 참고하여 정확히 출제하세요.'
       : `교사가 지정한 유형(${params.selectedSkills.join(', ')})을 설계표 순서에 맞추어 정확히 출제하세요.`
   }
 - 수행지시어 지침: ${directiveGuide}
@@ -935,7 +1077,11 @@ export async function refineSingleItem(
     params.mcqEnglishSkills || getDefaultEnglishOptionSkills()
   );
   const defaultMcqOptLang: 'en' | 'ko' =
-    (params.mcqOptionLanguage || 'auto') === 'en'
+    currentItem.questionFormat === 'ib_mcq_3'
+      ? (params.mcqOptionLanguage || 'auto') === 'ko'
+        ? 'ko'
+        : 'en'
+      : (params.mcqOptionLanguage || 'auto') === 'en'
       ? 'en'
       : (params.mcqOptionLanguage || 'auto') === 'ko'
       ? 'ko'
@@ -951,13 +1097,12 @@ export async function refineSingleItem(
 
   const systemInstruction = `당신은 대구광역시교육청 중등 영어듣기 출제 전문 AI 보조교사이자 원어민 구어체 감수자입니다.
 교사가 현재 편집 중인 문항 데이터(JSON)를 바탕으로 교사의 수정 요청사항을 정확히 반영하여 개선된 단일 문항 JSON을 반환하세요.
-
 [필수 준수 원칙]
 1. 원어민 자연 구어체: 한국어 직역(예: meteorological center, ecological transition 등)과 일상 대화에 어색한 문어체/전문어(utilize, commence, relocate, rectify 등)를 피하고 원어민이 실제 말하는 쉬운 구어 표현으로 작성하세요.
    - 현재 난이도 기준(${currentItem.difficulty} / ${currentItem.vocabLevelLabel}): ${difficultyGuide}
 2. 듣기 평가 전용(Audio-Only) 타당도: 학생에게는 대본이 제공되지 않습니다. 발문·상자·보기에 "대본을 보고", "대본에서 찾아", "지문에서", "윗글", "읽고", "transcript/passage" 같은 읽기 표현을 절대 사용하지 마세요.
 3. 일관성 유지: 대본(transcript) 수정 시 화자 표기(W:, M:)를 유지하고, 발문·모범답안·선택지·채점기준(최고점=totalMarks)·해설·우리말 해석이 수정된 대본과 완벽히 일치하도록 함께 업데이트하세요.
-4. 5지선다 선택형(mcq_5)의 경우 교사가 별도로 언어를 지정하지 않았다면 현재 선택지 언어(또는 유형 기본값: ${
+4. 선택형 문항(ib_mcq_3은 3개 A/B/C 선택지 및 correctChoice 1~3, mcq_5는 5개 ①~⑤ 선택지 및 correctChoice 1~5)의 경우 교사가 별도로 언어를 지정하지 않았다면 현재 선택지 언어(또는 유형 기본값: ${
     defaultMcqOptLang === 'en' ? '영어 보기' : '한국어 보기'
   })와 병렬 구조, 길이순(또는 논리적 오름차순) 배열 원칙을 유지하세요.`;
 

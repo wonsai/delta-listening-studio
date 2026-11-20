@@ -7,11 +7,15 @@ export type McqOptionLanguageMode = 'auto' | 'en' | 'ko';
 export type McqPromptLanguageMode = 'ko' | 'en';
 
 export type QuestionFormatType =
-  | 'gap_poster'   // 서답형: 안내문·포스터·메모 빈칸 완성형 (PDF 예시 1)
-  | 'short_kr'     // 서답형: 우리말 서술형 - 의도·이유·핵심 내용 (PDF 예시 3)
-  | 'short_en'     // 서답형: 영어 단답·요약형
-  | 'tf_justify'   // 서답형: 참/거짓(T/F) 판별 및 근거 서술 (IB형)
-  | 'mcq_5';       // 선택형: 5지선다 객관식 (PDF 예시 2, 4 및 기존형 100%)
+  | 'ib_mcq_3'         // IB 3지선다 선택형 (A·B·C, Choose the correct answer)
+  | 'ib_multi_true'    // IB 참인 진술 복수 선택형 (Choose the 2/5 true statements)
+  | 'ib_speaker_match' // IB 화자·관점 매칭 체크표 (Whose opinion? / 짝짓기)
+  | 'gap_poster'       // IB·대구형 노트·안내문·포스터·표 빈칸 완성형 (3단어 이내)
+  | 'short_en'         // IB 영어 단답형 (Answer the following questions)
+  | 'tf_justify'       // DELTA 진위(T/F)·동의 판별 및 근거 서술형
+  | 'ib_order'         // DELTA 순서 배열형 (정보 조직·사건/절차 배열)
+  | 'short_kr'         // 대구형 우리말 의도·이유·함축 서술형
+  | 'mcq_5';           // 5지선다 객관식 (①~⑤, 수능 영어 듣기 및 대구 C형 정기시험)
 
 export type VocabLevelId =
   | 'mid_basic'       // 중학교 기본 어휘 (1,200~1,500단어 / CEFR A2)
@@ -122,6 +126,8 @@ export interface GenerationParams {
   questionFormatMode: DistributionMode; // 'auto'(허용 형식 균형 배분) | 'counts'(문항 수별 직접 지정)
   questionFormats: QuestionFormatType[]; // 대구형에서 허용할 문항 형식들 (auto 모드용)
   questionFormatCounts: Partial<Record<QuestionFormatType, number>>; // 문항 형식별 출제 개수 (counts 모드용)
+  stdTypeMode: DistributionMode; // 기존형(수능 영어 듣기): 'auto'(선택 유형 자동 균형) | 'counts'(유형별 개수 지정)
+  stdTypeCounts: Record<string, number>; // 기존형(수능 영어 듣기) 유형별 출제 개수 (counts 모드용)
   mcqOptionLanguage: McqOptionLanguageMode; // 'auto'(기출 유형별 자동 · 기본) | 'en'(전체 영어 보기) | 'ko'(전체 한국어 보기)
   mcqEnglishSkills: string[];    // 'auto' 모드에서 영어(또는 숫자·영문기호) 보기로 출제할 문항 유형(skill) 목록
   mcqPromptLanguage: McqPromptLanguageMode; // 'ko'(한국어 발문 · 기본) | 'en'(영어 발문 · IB 원문형)

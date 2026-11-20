@@ -659,27 +659,31 @@ export function validateListeningItem(
   }
 
   if (!item.isConstructedResponse) {
-    const opts = (item.options || []).map((o) => (o || '').trim());
+    const isIb3 = item.questionFormat === 'ib_mcq_3';
+    const expectedCount = isIb3 ? 3 : 5;
+    const labelName = isIb3 ? 'IB 3지선다' : '5지선다';
+    const rangeText = isIb3 ? 'A~C' : '①~⑤';
+    const opts = (item.options || []).slice(0, expectedCount).map((o) => (o || '').trim());
     const filledCount = opts.filter(Boolean).length;
-    if (filledCount < 5) {
+    if (filledCount < expectedCount) {
       issues.push({
         id: 'mcq-missing-options',
         severity: 'error',
         category: 'structure',
-        title: `5지선다 선택지 부족 (${filledCount}/5개 입력됨)`,
-        detail: '①~⑤ 5개 선택지가 모두 채워져 있어야 합니다.',
-        autoFixHint: '비어 있는 선택지를 채워 5개 선택지 모두 완성해 주세요.',
+        title: `${labelName} 선택지 부족 (${filledCount}/${expectedCount}개 입력됨)`,
+        detail: `${rangeText} ${expectedCount}개 선택지가 모두 채워져 있어야 합니다.`,
+        autoFixHint: `비어 있는 선택지를 채워 ${expectedCount}개 선택지 모두 완성해 주세요.`,
       });
     } else {
       // 중복 선택지 검사
       const normalizedOpts = opts.map((o) => o.toLowerCase().replace(/\s+/g, ' '));
-      if (new Set(normalizedOpts).size < 5) {
+      if (new Set(normalizedOpts).size < expectedCount) {
         issues.push({
           id: 'mcq-duplicate-options',
           severity: 'error',
           category: 'structure',
           title: '중복된 선택지가 있습니다',
-          detail: '5개 선택지는 서로 명확히 구별되는 내용이어야 합니다.',
+          detail: `${expectedCount}개 선택지는 서로 명확히 구별되는 내용이어야 합니다.`,
           autoFixHint: '중복된 선택지를 서로 구별되는 매력적인 오답으로 수정해 주세요.',
         });
       }
@@ -693,15 +697,15 @@ export function validateListeningItem(
           severity: 'warning',
           category: 'structure',
           title: '선택지 언어 혼용 감지 (한국어·영어 섞임)',
-          detail: `한국어 선택지 ${koCount}개와 영어 선택지 ${enOnlyCount}개가 섞여 있습니다. 5개 선택지의 언어와 문장 구조를 통일하세요.`,
-          autoFixHint: '5개 선택지 전체를 하나의 언어(기출 기준 영어 또는 한국어)와 병렬 구조로 통일해 주세요.',
+          detail: `한국어 선택지 ${koCount}개와 영어 선택지 ${enOnlyCount}개가 섞여 있습니다. ${expectedCount}개 선택지의 언어와 문장 구조를 통일하세요.`,
+          autoFixHint: `${expectedCount}개 선택지 전체를 하나의 언어(기출 기준 영어 또는 한국어)와 병렬 구조로 통일해 주세요.`,
         });
       }
     }
 
     if (
       item.correctChoice < 1 ||
-      item.correctChoice > 5 ||
+      item.correctChoice > expectedCount ||
       !opts[item.correctChoice - 1]
     ) {
       issues.push({
@@ -709,7 +713,9 @@ export function validateListeningItem(
         severity: 'error',
         category: 'structure',
         title: '선택형 정답 번호가 유효하지 않습니다',
-        detail: '1~5번 중 내용이 채워진 선택지를 정답으로 지정해 주세요.',
+        detail: isIb3
+          ? 'A~C 중 내용이 채워진 선택지를 정답으로 지정해 주세요.'
+          : '1~5번 중 내용이 채워진 선택지를 정답으로 지정해 주세요.',
       });
     }
   } else {

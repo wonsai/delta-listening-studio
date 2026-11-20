@@ -1098,7 +1098,11 @@ export const Step4AudioExport: React.FC<Step4Props> = ({
                               : 'bg-blue-100 text-blue-800'
                           }`}
                         >
-                          {item.isConstructedResponse ? '서답형' : '5지선다 선택형'}
+                          {item.isConstructedResponse
+                            ? '서답형'
+                            : item.questionFormat === 'ib_mcq_3'
+                            ? 'IB 3지선다 선택형'
+                            : '5지선다 선택형'}
                         </span>
                         <span className="text-xs font-bold text-slate-800">
                           [{item.directive}] {item.skill}

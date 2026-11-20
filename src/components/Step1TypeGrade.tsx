@@ -37,6 +37,7 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
         mode: 'std',
         questionFormatMode: 'auto',
         questionFormats: ['mcq_5'],
+        stdTypeMode: 'auto',
         evalPurpose: '학교 자체 영어듣기능력평가(100% 객관식)',
         selectedStandards: [],
         selectedSkills: [],
@@ -45,7 +46,13 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
       onChangeParams({
         mode: 'ib',
         questionFormatMode: 'auto',
-        questionFormats: ['gap_poster', 'short_kr', 'mcq_5'],
+        questionFormats: [
+          'ib_mcq_3',
+          'ib_multi_true',
+          'ib_speaker_match',
+          'gap_poster',
+          'short_en',
+        ],
         evalPurpose: '정기시험 혹은 수행평가(서술형/서답형)',
         selectedStandards: [],
         selectedSkills: [],
@@ -181,24 +188,24 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
 
             <div className="mt-4">
               <div className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-[#09396A] mb-1.5">
-                2026 대구미래역량교육과정 · IB형 모델
+                IB English B Paper 2 · 대구형 IB 샘플 모델
               </div>
               <h2 className="text-lg font-extrabold text-slate-900">
                 대구형 영어듣기 평가 (IB · 서답형/선택형)
               </h2>
               <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                현장지원단 자료집 표준 서식을 기반으로 안내문·포스터 빈칸 완성형, 우리말 의도·이유 서술형, 영어 단답형 및 사고력 선택형 문항과 <b>다단계 채점 기준표</b>를 함께 설계합니다.
+                IB Paper 2 Listening 기출 및 대구형 IB 샘플(DELTA · 2026 현장지원단 자료집)을 기반으로 <b>3지선다(A~C), 참인 진술 복수 선택, 화자·관점 매칭표, 노트·포스터 빈칸(3단어 이내), 영어 단답형, T/F+근거, 순서 배열, 우리말 서술형</b>과 채점 기준표를 설계합니다.
               </p>
             </div>
 
             <ul className="mt-4 pt-3 border-t border-slate-200/80 space-y-1.5 text-xs text-slate-700">
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#357DC7]" />
-                안내 포스터 빈칸 완성 / 우리말 의도·이유 서술 / 5지선다 조합 가능
+                IB Paper 2 핵심 5유형 + DELTA(T/F·순서배열) + 대구 자료집(우리말 서술·5지선다)
               </li>
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#357DC7]" />
-                10대 수행지시어(파악·추론·분석·요약 등) 및 부분점수 루브릭 자동 생성
+                10대 수행지시어 및 IB Markscheme(Accept / Reject · 부분점수) 루브릭 자동 생성
               </li>
             </ul>
           </button>
@@ -227,24 +234,24 @@ export const Step1TypeGrade: React.FC<Step1Props> = ({
 
             <div className="mt-4">
               <div className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-slate-200 text-slate-700 mb-1.5">
-                시도교육청 공동주관 · 수능 듣기 표준형
+                대학수학능력시험(수능) 영어 듣기 1~17번 표준
               </div>
               <h2 className="text-lg font-extrabold text-slate-900">
-                기존 영어듣기 유형 (100% 5지선다 객관식)
+                기존 영어듣기 유형 (수능 영어 듣기 · 5지선다)
               </h2>
               <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                전 문항을 <b>100% 5지선다 객관식(①~⑤)</b>으로 출제합니다. 목적, 의견, 관계, 할 일, 이유, 금액·숫자, 언급되지 않은 것, 내용 일치, 이어질 응답 등 표준 유형을 즉시 생성합니다.
+                <b>수능 영어 듣기 1~17번 공식 유형</b>(목적·의견·요지·할 일·금액·이유·언급안됨·내용불일치·도표·짧은/긴 대화 응답·상황 설명·복합 담화)을 선택하거나 문항별 개수를 지정해 5지선다 객관식으로 출제합니다.
               </p>
             </div>
 
             <ul className="mt-4 pt-3 border-t border-slate-200/80 space-y-1.5 text-xs text-slate-700">
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                정기고사 객관식 듣기 문항 및 학교 자체 듣기평가 출제에 최적화
+                수능 1~17번 문항 번호별 유형 선택 및 개수 지정 배분 지원
               </li>
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                매력적인 오답 선택지 5개 및 정답 근거 해설 자동 생성
+                유형별 한국어/영어 보기 자동 적용 및 정답 근거 해설 생성
               </li>
             </ul>
           </button>

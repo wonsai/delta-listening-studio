@@ -169,8 +169,12 @@ export const Step3Editor: React.FC<Step3Props> = ({
   const stdCodeOnly =
     item.achievementStandard.match(/^\[[^\]]+\]/)?.[0] || '성취기준';
 
+  const isIb3Choice = item.questionFormat === 'ib_mcq_3';
+  const choiceIndices = isIb3Choice ? [0, 1, 2] : [0, 1, 2, 3, 4];
+  const choiceMarkers = isIb3Choice ? ['A.', 'B.', 'C.'] : CIRCLED_NUMS;
+
   const handleFormatChange = (fmt: QuestionFormatType) => {
-    const isConstructed = fmt !== 'mcq_5';
+    const isConstructed = fmt !== 'mcq_5' && fmt !== 'ib_mcq_3';
     const nextRubric: RubricRow[] =
       isConstructed && item.rubricRows.length === 0
         ? [
@@ -197,12 +201,26 @@ export const Step3Editor: React.FC<Step3Props> = ({
           ]
         : item.rubricRows;
 
+    const nextOptions =
+      fmt === 'ib_mcq_3'
+        ? [0, 1, 2].map((i) => item.options[i] || '')
+        : fmt === 'mcq_5'
+        ? [0, 1, 2, 3, 4].map((i) => item.options[i] || '')
+        : item.options;
+
     onUpdateItem(item.id, {
       questionFormat: fmt,
       isConstructedResponse: isConstructed,
+      options: nextOptions,
+      correctChoice:
+        fmt === 'ib_mcq_3'
+          ? Math.min(3, Math.max(1, item.correctChoice || 1))
+          : Math.min(5, Math.max(1, item.correctChoice || 1)),
       rubricRows: nextRubric,
       evalMethod: isConstructed
         ? '정기시험 혹은 수행평가(서술형/서답형)'
+        : fmt === 'ib_mcq_3'
+        ? '대구형(IB) 영어듣기 평가(3지선다 선택형)'
         : '정기시험(선택형)',
     });
   };
@@ -693,9 +711,9 @@ export const Step3Editor: React.FC<Step3Props> = ({
 
                 {!item.isConstructedResponse ? (
                   <ol className="space-y-1.5 text-xs text-slate-900 pl-1">
-                    {[0, 1, 2, 3, 4].map((oIdx) => (
+                    {choiceIndices.map((oIdx) => (
                       <li key={oIdx} className="leading-relaxed">
-                        {CIRCLED_NUMS[oIdx]} {item.options[oIdx] || '(비어 있음)'}
+                        {choiceMarkers[oIdx]} {item.options[oIdx] || '(비어 있음)'}
                       </li>
                     ))}
                   </ol>
@@ -953,12 +971,14 @@ export const Step3Editor: React.FC<Step3Props> = ({
                       />
                     </div>
 
-                    {/* 5지선다 선택지 편집 (선택형일 때 표시) */}
+                    {/* 선택지 편집 (선택형일 때 표시: IB 3지선다 A/B/C 또는 5지선다 ①~⑤) */}
                     {!item.isConstructedResponse && (
                       <div className="space-y-2 pt-2">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <label className="block text-xs font-bold text-slate-700">
-                            5지선다 선택지 및 정답 지정 (라디오 버튼 클릭으로 정답 선택)
+                            {isIb3Choice
+                              ? 'IB 3지선다 선택지 (A·B·C) 및 정답 지정 (라디오 버튼 클릭으로 정답 선택)'
+                              : '5지선다 선택지 및 정답 지정 (라디오 버튼 클릭으로 정답 선택)'}
                           </label>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <button
@@ -966,7 +986,9 @@ export const Step3Editor: React.FC<Step3Props> = ({
                               disabled={busyAny}
                               onClick={() =>
                                 triggerQuickRefine(
-                                  '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, ①~⑤ 선택지(options) 5개를 해당 문항 유형의 기출 표준 병렬 구조와 길이순 배열 원칙에 맞는 자연스러운 영어(English) 보기로 변환해 주세요.'
+                                  isIb3Choice
+                                    ? '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, A/B/C 선택지(options) 3개를 IB Paper 2 표준 병렬 구조의 자연스러운 영어(English) 보기로 변환해 주세요.'
+                                    : '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, ①~⑤ 선택지(options) 5개를 해당 문항 유형의 기출 표준 병렬 구조와 길이순 배열 원칙에 맞는 자연스러운 영어(English) 보기로 변환해 주세요.'
                                 )
                               }
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#EAF2FB] text-[#09396A] border border-[#357DC7]/40 hover:bg-blue-100 transition disabled:opacity-50"
@@ -979,7 +1001,9 @@ export const Step3Editor: React.FC<Step3Props> = ({
                               disabled={busyAny}
                               onClick={() =>
                                 triggerQuickRefine(
-                                  '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, ①~⑤ 선택지(options) 5개를 어미와 문장 구조가 균일한 자연스러운 한국어 보기로 변환해 주세요.'
+                                  isIb3Choice
+                                    ? '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, A/B/C 선택지(options) 3개를 어미와 문장 구조가 균일한 자연스러운 한국어 보기로 변환해 주세요.'
+                                    : '현재 문항의 대본과 발문·정답 논리는 그대로 유지하되, ①~⑤ 선택지(options) 5개를 어미와 문장 구조가 균일한 자연스러운 한국어 보기로 변환해 주세요.'
                                 )
                               }
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 transition disabled:opacity-50"
@@ -989,7 +1013,7 @@ export const Step3Editor: React.FC<Step3Props> = ({
                             </button>
                           </div>
                         </div>
-                        {[0, 1, 2, 3, 4].map((oIdx) => {
+                        {choiceIndices.map((oIdx) => {
                           const choiceNum = oIdx + 1;
                           const isCorrect = item.correctChoice === choiceNum;
                           return (
@@ -1014,18 +1038,23 @@ export const Step3Editor: React.FC<Step3Props> = ({
                                 title="정답으로 지정"
                               />
                               <span className="text-sm font-extrabold text-slate-700 w-5">
-                                {CIRCLED_NUMS[oIdx]}
+                                {choiceMarkers[oIdx]}
                               </span>
                               <input
                                 type="text"
                                 value={item.options[oIdx] || ''}
                                 onChange={(e) => {
                                   const nextOpts = [...item.options];
-                                  while (nextOpts.length < 5) nextOpts.push('');
+                                  while (nextOpts.length < choiceIndices.length)
+                                    nextOpts.push('');
                                   nextOpts[oIdx] = e.target.value;
                                   onUpdateItem(item.id, { options: nextOpts });
                                 }}
-                                placeholder={`${choiceNum}번 선택지 내용을 입력하세요`}
+                                placeholder={
+                                  isIb3Choice
+                                    ? `${choiceMarkers[oIdx]} 선택지 내용을 입력하세요`
+                                    : `${choiceNum}번 선택지 내용을 입력하세요`
+                                }
                                 className="flex-1 px-2.5 py-1 rounded border border-transparent hover:border-slate-200 focus:border-[#357DC7] bg-white text-xs focus:outline-none"
                               />
                               {isCorrect && (
@@ -1166,8 +1195,9 @@ export const Step3Editor: React.FC<Step3Props> = ({
                     ) : (
                       <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
                         <span className="text-sm font-extrabold text-emerald-900">
-                          정답: {item.correctChoice}번 (
-                          {CIRCLED_NUMS[item.correctChoice - 1]})
+                          {isIb3Choice
+                            ? `정답: ${['A', 'B', 'C'][item.correctChoice - 1] || 'A'}`
+                            : `정답: ${item.correctChoice}번 (${CIRCLED_NUMS[item.correctChoice - 1]})`}
                         </span>
                         <span className="text-xs text-emerald-700">
                           (위 선택지 라디오 버튼에서 변경 가능)

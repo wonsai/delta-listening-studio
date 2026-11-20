@@ -20,7 +20,19 @@ const PAGE_MARGIN_TB = 4252;
 const BODY_WIDTH = 48190;
 
 const CIRCLED_NUMS = ['①', '②', '③', '④', '⑤'];
+const IB_CHOICE_LETTERS = ['A.', 'B.', 'C.'];
+const IB_CHOICE_CODES = ['A', 'B', 'C'];
 const KOR_SEC_LETTERS = ['나', '다', '라', '마', '바', '사', '아', '자', '차', '카', '타', '파', '하'];
+
+function isBoxStimulusFormat(format: ListeningItem['questionFormat']): boolean {
+  return (
+    format === 'gap_poster' ||
+    format === 'tf_justify' ||
+    format === 'ib_multi_true' ||
+    format === 'ib_speaker_match' ||
+    format === 'ib_order'
+  );
+}
 
 async function openBlankHwpx(): Promise<HwpxDocument> {
   const skeletonBytes = getSkeletonHwpxBytes();
@@ -531,8 +543,8 @@ export async function buildMasterSpecHwpx(
       },
     ];
 
-    // 포스터/안내문 상자 (stimulusTitle이 있거나 gap_poster/tf_justify인 경우 중첩 박스 테이블로 깔끔하게 렌더링)
-    if (item.stimulusTitle.trim() || (item.stimulusBody.trim() && item.questionFormat === 'gap_poster')) {
+    // 포스터/안내문/체크표/진술문 상자 (중첩 박스 테이블로 깔끔하게 렌더링)
+    if (item.stimulusTitle.trim() || (item.stimulusBody.trim() && isBoxStimulusFormat(item.questionFormat))) {
       questionBlocks.push({
         kind: 'text',
         text: '',
@@ -596,13 +608,16 @@ export async function buildMasterSpecHwpx(
         });
     }
 
-    // 5지선다 선택지
+    // 선택지 (IB 3지선다 A/B/C 또는 5지선다 ①~⑤)
     if (!item.isConstructedResponse) {
-      item.options.slice(0, 5).forEach((opt, oIdx) => {
+      const isIb3 = item.questionFormat === 'ib_mcq_3';
+      const maxChoices = isIb3 ? 3 : 5;
+      const prefixes = isIb3 ? IB_CHOICE_LETTERS : CIRCLED_NUMS;
+      item.options.slice(0, maxChoices).forEach((opt, oIdx) => {
         if (opt.trim()) {
           questionBlocks.push({
             kind: 'text',
-            text: `${CIRCLED_NUMS[oIdx]} ${opt.trim()}`,
+            text: `${prefixes[oIdx]} ${opt.trim()}`,
             charPrId: st.charBody,
             paraPrId: st.paraLeft,
           });
@@ -703,9 +718,13 @@ export async function buildMasterSpecHwpx(
         },
       });
     } else {
+      const answerText =
+        item.questionFormat === 'ib_mcq_3'
+          ? `정답: ${IB_CHOICE_CODES[item.correctChoice - 1] || item.correctChoice}`
+          : `정답: ${item.correctChoice}번 (${CIRCLED_NUMS[item.correctChoice - 1] || ''})`;
       gradingBlocks.push({
         kind: 'text',
-        text: `정답: ${item.correctChoice}번 (${CIRCLED_NUMS[item.correctChoice - 1] || ''})`,
+        text: answerText,
         charPrId: st.charBodyBold,
         paraPrId: st.paraLeft,
       });
@@ -816,9 +835,7 @@ function estimateSingleItemHeightHwpUnit(item: ListeningItem): number {
   const hasBox =
     Boolean(item.stimulusTitle.trim()) ||
     (Boolean(item.stimulusBody.trim()) &&
-      (item.questionFormat === 'gap_poster' ||
-        item.questionFormat === 'tf_justify' ||
-        !item.isConstructedResponse));
+      (isBoxStimulusFormat(item.questionFormat) || !item.isConstructedResponse));
 
   if (hasBox) {
     const bodyLines = String(item.stimulusBody || '')
@@ -837,6 +854,18 @@ function estimateSingleItemHeightHwpUnit(item: ListeningItem): number {
 
   if (item.isConstructedResponse) {
     h += 2 * LINE_H; // 답안 메모 여백
+  } else if (item.questionFormat === 'ib_mcq_3') {
+    const opts3 = item.options.slice(0, 3);
+    const maxW = opts3.reduce((acc, cur) => Math.max(acc, visualWidthUnits(cur)), 0);
+    if (maxW <= 12.0) {
+      h += LINE_H;
+    } else {
+      const optLines = opts3.reduce((sum, opt) => {
+        const w = visualWidthUnits(opt) + 4;
+        return sum + Math.max(1, Math.ceil(w / (COL_LINE_CHARS - 2)));
+      }, 0);
+      h += optLines * LINE_H;
+    }
   } else {
     const layout = classifyOptionRowLayout(item.options);
     if (layout === 1) h += LINE_H;
@@ -871,7 +900,13 @@ export function summarizeOfficialExamComposition(
     if (!it.isConstructedResponse) {
       mcqCount += 1;
       mcqPoints += pts;
-    } else if (it.questionFormat === 'gap_poster' || it.questionFormat === 'short_en') {
+    } else if (
+      it.questionFormat === 'gap_poster' ||
+      it.questionFormat === 'short_en' ||
+      it.questionFormat === 'ib_multi_true' ||
+      it.questionFormat === 'ib_speaker_match' ||
+      it.questionFormat === 'ib_order'
+    ) {
       shortAnswerCount += 1;
       shortAnswerPoints += pts;
     } else {
@@ -1623,7 +1658,25 @@ export async function buildOfficialExamHwpx(
     }
   };
 
-  const appendMcqOptions = (rawOptions: string[]) => {
+  const appendMcqOptions = (rawOptions: string[], choiceCount: 3 | 5 = 5) => {
+    if (choiceCount === 3) {
+      const opts = Array.from({ length: 3 }, (_, k) => cleanOptionText(rawOptions[k] || ''));
+      const labeled = opts.map((txt, k) => `${IB_CHOICE_LETTERS[k]} ${txt}`.trimEnd());
+      const maxW = opts.reduce((acc, cur) => Math.max(acc, visualWidthUnits(cur)), 0);
+      if (maxW <= 12.0) {
+        sec1El.appendChild(
+          createHpTabbedOptionPara(doc1, '30', '5', '29', labeled)
+        );
+      } else {
+        for (const line of labeled) {
+          sec1El.appendChild(
+            createHpPara(doc1, '38', '0', [{ charPrId: '33', text: line }])
+          );
+        }
+      }
+      return;
+    }
+
     const opts = Array.from({ length: 5 }, (_, k) => cleanOptionText(rawOptions[k] || ''));
     const labeled = opts.map((txt, k) => `${CIRCLED_NUMS[k]} ${txt}`.trimEnd());
     const layout = classifyOptionRowLayout(opts);
@@ -1678,8 +1731,8 @@ export async function buildOfficialExamHwpx(
     if (sub.stimulusTitle?.trim() || sub.stimulusBody?.trim()) {
       appendStimulusBox(sub.stimulusTitle || '', sub.stimulusBody || '');
     }
-    if (sub.format === 'mcq_5') {
-      appendMcqOptions(sub.options);
+    if (sub.format === 'mcq_5' || sub.format === 'ib_mcq_3') {
+      appendMcqOptions(sub.options, sub.format === 'ib_mcq_3' ? 3 : 5);
     } else {
       sec1El.appendChild(createHpPara(doc1, '2', '0', [{ charPrId: '32', text: '' }]));
     }
@@ -1713,13 +1766,11 @@ export async function buildOfficialExamHwpx(
       )
     );
 
-    // 제시문 상자 / 포스터 / <보 기> 또는 서답형 소문항 안내
+    // 제시문 상자 / 포스터 / 체크표 / <보 기> 또는 서답형 소문항 안내
     const shouldRenderBox =
       Boolean(item.stimulusTitle.trim()) ||
       (Boolean(item.stimulusBody.trim()) &&
-        (item.questionFormat === 'gap_poster' ||
-          item.questionFormat === 'tf_justify' ||
-          !item.isConstructedResponse));
+        (isBoxStimulusFormat(item.questionFormat) || !item.isConstructedResponse));
 
     if (shouldRenderBox) {
       appendStimulusBox(item.stimulusTitle, item.stimulusBody);
@@ -1737,7 +1788,7 @@ export async function buildOfficialExamHwpx(
 
     // 선택지 또는 서답형 풀이 여백
     if (!item.isConstructedResponse) {
-      appendMcqOptions(item.options);
+      appendMcqOptions(item.options, item.questionFormat === 'ib_mcq_3' ? 3 : 5);
     } else {
       // 서답형 문항 아래 답안 메모 여백 (자동번호가 증가하지 않도록 기본 바탕글 문단 사용)
       sec1El.appendChild(createHpPara(doc1, '2', '0', [{ charPrId: '32', text: '' }]));
@@ -1936,7 +1987,11 @@ export async function buildAnswerKeyHwpx(
     setCellSimpleText(
       sumTbl.cell(r, 1),
       sec,
-      it.isConstructedResponse ? '서답형' : '5지선다 선택형',
+      it.isConstructedResponse
+        ? '서답형'
+        : it.questionFormat === 'ib_mcq_3'
+        ? 'IB 3지선다 선택형'
+        : '5지선다 선택형',
       { charPrId: st.charBody, paraPrId: st.paraCenter, borderFillId: st.bfBasic }
     );
     setCellSimpleText(sumTbl.cell(r, 2), sec, `[${it.directive}] ${it.skill}`, {
@@ -1949,6 +2004,8 @@ export async function buildAnswerKeyHwpx(
       sec,
       it.isConstructedResponse
         ? it.modelAnswer || '-'
+        : it.questionFormat === 'ib_mcq_3'
+        ? `${IB_CHOICE_CODES[it.correctChoice - 1] || it.correctChoice}`
         : `${CIRCLED_NUMS[it.correctChoice - 1] || ''} (${it.correctChoice}번)`,
       {
         charPrId: st.charBodyBold,
@@ -2008,6 +2065,8 @@ export async function buildAnswerKeyHwpx(
           ansLines.push(`  - ${rr.scoreLabel}: ${rr.criteria}`);
         });
       }
+    } else if (it.questionFormat === 'ib_mcq_3') {
+      ansLines.push(`[정답] ${IB_CHOICE_CODES[it.correctChoice - 1] || it.correctChoice}`);
     } else {
       ansLines.push(`[정답] ${it.correctChoice}번 (${CIRCLED_NUMS[it.correctChoice - 1] || ''})`);
     }
